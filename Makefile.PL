@@ -16,10 +16,15 @@ WriteMakefile(
     },
     BUILD_REQUIRES => {
         'Test::More' => 0,
+        'LWP' => 0,
+        'File::chdir' => 0,
+        'Capture::Tiny' => 0,
     },
     PREREQ_PM => {
-        #'ABC'              => 1.6,
-        #'Foo::Bar::Module' => 5.0401,
+        'Params::Validate' => 0,
+        'AnyEvent' => 0,
+        'JSON' => 0,
+        'URI' => 0,
     },
     dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean => { FILES => 'Gerrit-Client-*' },
