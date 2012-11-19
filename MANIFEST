@@ -11,6 +11,6 @@ t/00-setup-test-gerrit.t
 t/10-gerrit.t
 t/50-system-stream-events.t
 t/99-shutdown-test-gerrit.t
-t/boilerplate.t
+t/changes.t
 t/manifest.t
 t/pod.t
