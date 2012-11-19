@@ -239,6 +239,7 @@ sub stream_events {
       }
     );
     $handle->{r_h_stderr} = AnyEvent::Handle->new( fh => $r2, );
+    $handle->{r_h_stderr}->on_error( sub {} );
     $handle->{warn_on_stderr} = 1;
 
     # run stream-events with stdout connected to pipe ...

@@ -8,7 +8,8 @@ lib/Gerrit/Client.pm
 lib/Gerrit/Client/Test.pm
 t/00-load.t
 t/00-setup-test-gerrit.t
-t/10-system-stream-events.t
+t/10-gerrit.t
+t/50-system-stream-events.t
 t/99-shutdown-test-gerrit.t
 t/boilerplate.t
 t/manifest.t
