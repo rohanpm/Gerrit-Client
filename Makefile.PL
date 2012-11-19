@@ -29,4 +29,5 @@ WriteMakefile(
   },
   dist  => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
   clean => { FILES    => 'Gerrit-Client-*' },
+  (MM->can('signature_target') ? (SIGN => 1) : ()),
 );
