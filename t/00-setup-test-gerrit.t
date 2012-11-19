@@ -26,6 +26,8 @@ sub run
   );
   ok( $gerrit, "gerrit set up at $testdir" )
     || BAIL_OUT( 'gerrit installation failed; cannot continue' );
+  ok( $gerrit->ensure_gerrit_running(), 'gerrit running' )
+    || BAIL_OUT( "can't launch gerrit" );
 
   diag( 'test gerrit instance: ', explain( $gerrit ) );
   return;
