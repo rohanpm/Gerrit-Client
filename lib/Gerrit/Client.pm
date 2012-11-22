@@ -125,7 +125,7 @@ sub _quote_gerrit_arg {
 
 =over
 
-=item B<stream_events> url => $gerrit_url
+=item B<< stream_events url => $gerrit_url, ... >>
 
 Connect to "gerrit stream-events" on the given gerrit host and
 register one or more callbacks for events. Returns an opaque handle to
@@ -140,15 +140,16 @@ stream-events handle as their first argument.
 
 =over
 
-=item on_event => $cb->($handle, $data)
+=item B<< on_event => $cb->($handle, $data) >>
 
 Called when an event has been received.
 $data is a reference to a hash representing the event.
 
-See the Gerrit documentation for information on the possible events:
-L<http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-stream-events.html>
+See L<the Gerrit
+documentation|http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-stream-events.html>
+for information on the possible events.
 
-=item on_error => $cb->($handle, $error)
+=item B<< on_error => $cb->($handle, $error) >>
 
 Called when an error occurs in the connection.
 $error is a human-readable string.
@@ -162,7 +163,8 @@ If this callback returns a true value, stream_events will attempt to
 reconnect to Gerrit and resume processing; otherwise, the connection
 is terminated and no more events will occur.
 
-The default error callback will warn and return 1, retrying on all errors.
+The default error callback will warn and return 1, retrying on all
+errors.
 
 =back
 
@@ -324,8 +326,9 @@ sub random_change_id {
 
 Returns the 'next' Change-Id which should be used for a commit created
 by the current git author/committer (which should be set by
-L<git_environment> prior to calling this method). The current working
-directory must be within a git repository.
+L<git_environment|/git_environment-name-name-email-email-author_only-0-1->
+prior to calling this method). The current working directory must be
+within a git repository.
 
 This method is suitable for usage within a script which periodically
 creates commits for review, but should have only one outstanding
@@ -393,8 +396,8 @@ sub next_change_id {
   return random_change_id();
 }
 
-=item B<git_environment>( name => $name, email => $email,
-                          author_only => [0|1] )
+=item B<< git_environment(name => $name, email => $email,
+                          author_only => [0|1] ) >>
 
 Returns a copy of %ENV modified suitably for the creation of git
 commits by a script/bot.
@@ -403,15 +406,15 @@ Options:
 
 =over
 
-=item name
+=item B<name>
 
 The human-readable name used for git commits. Mandatory.
 
-=item email
+=item B<email>
 
 The email address used for git commits. Mandatory.
 
-=item author_only
+=item B<author_only>
 
 If 1, the environment is only modified for the git I<author>, and not
 the git I<committer>.  Depending on the gerrit setup, this may be
@@ -423,7 +426,7 @@ Defaults to 0.
 =back
 
 When generating commits for review in gerrit, this method may be used
-in conjunction with L<next_change_id> to ensure this bot has only one
+in conjunction with L</next_change_id> to ensure this bot has only one
 outstanding change for review at any time, as in the following
 example:
 
@@ -488,7 +491,7 @@ my %GERRIT_REVIEW_OPTIONS = (
   )
 );
 
-=item B<review> $commit_or_change, url => $gerrit_url, ...
+=item B<< review $commit_or_change, url => $gerrit_url, ... >>
 
 Wrapper for the `gerrit review' command; add a comment and/or update the status
 of a change in gerrit.
@@ -508,37 +511,38 @@ All other arguments are optional, and include:
 
 =over
 
-=item on_success => $cb->( $commit_or_change )
+=item B<< on_success => $cb->( $commit_or_change ) >>
 
-=item on_error => $cb->( $commit_or_change, $error )
+=item B<< on_error => $cb->( $commit_or_change, $error ) >>
 
 Callbacks invoked when the operation succeeds or fails.
 
-=item abandon => 1|0
+=item B<< abandon => 1|0 >>
 
-=item message => $string
+=item B<< message => $string >>
 
-=item project => $string
+=item B<< project => $string >>
 
-=item restore => 1|0
+=item B<< restore => 1|0 >>
 
-=item stage => 1|0
+=item B<< stage => 1|0 >>
 
-=item submit => 1|0
+=item B<< submit => 1|0 >>
 
-=item code_review => $number
+=item B<< code_review => $number >>
 
-=item sanity_review => $number
+=item B<< sanity_review => $number >>
 
-=item verified => $number
+=item B<< verified => $number >>
 
-These options are passed to the `gerrit review' command.
-For information on their usage, please see the output of `gerrit review --help'
-on your gerrit installation, or see documentation at
-http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-review.html
+These options are passed to the `gerrit review' command.  For
+information on their usage, please see the output of `gerrit review
+--help' on your gerrit installation, or see L<the Gerrit
+documentation|http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-review.html>.
 
 Note that certain options can be disabled on a per-site basis.
-`gerrit review --help' will show only those options which are enabled on the given site.
+`gerrit review --help' will show only those options which are enabled
+on the given site.
 
 =back
 
@@ -563,7 +567,8 @@ sub review {
   my $parsed_url = _gerrit_parse_url( $options{url} );
   my @cmd = ( @{ $parsed_url->{cmd} }, 'review', $commit_or_change, );
 
-  # project can be filled in by explicit 'project' argument, or from URL, or left blank
+  # project can be filled in by explicit 'project' argument, or from
+  # URL, or left blank
   $options{project} ||= $parsed_url->{project};
 
   while ( my ( $key, $spec ) = each %GERRIT_REVIEW_OPTIONS ) {
@@ -626,7 +631,7 @@ ssh.
   local @Gerrit::Client::SSH = ('ssh', '-oAddressFamily=inet6');
   my $stream = Gerrit::Client::stream_events ...
 
-The default value is ('ssh').
+The default value is C<('ssh')>.
 
 =back
 
@@ -636,7 +641,7 @@ Rohan McGovern, <rohan@mcgovern.id.au>
 
 =head1 BUGS
 
-Please use <http://rt.cpan.org/> to view or report bugs.
+Please use L<http://rt.cpan.org/> to view or report bugs.
 
 =head1 LICENSE AND COPYRIGHT
 
