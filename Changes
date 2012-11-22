@@ -1,6 +1,10 @@
 Revision history for Gerrit-Client
 
-0.1     2012-11-19
+20121123    2012-11-23
+
+    - Documentation fixes
+
+0.1         2012-11-19
 
     - First version, ported from git://gitorious.org/qt/qtqa 98e8f3b99b9a40c21feb50868da1b93295ed5c38
     - Additional tests and Gerrit::Client::Test package added

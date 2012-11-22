@@ -75,7 +75,7 @@ our @EXPORT_OK = qw(
 );
 
 our @SSH     = ('ssh');
-our $VERSION = 0.1;
+our $VERSION = 20121123;
 
 # parses a gerrit URL and returns a hashref with following keys:
 #   cmd => arrayref, base ssh command for interacting with gerrit
