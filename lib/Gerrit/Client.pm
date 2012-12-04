@@ -60,7 +60,12 @@ use AnyEvent::Handle;
 use AnyEvent::Util;
 use AnyEvent;
 use Carp;
+use Data::Alias;
+use Data::Dumper;
 use English qw(-no_match_vars);
+use File::Path;
+use File::Spec::Functions;
+use File::chdir;
 use JSON;
 use Params::Validate qw(:all);
 use Scalar::Util qw(weaken);
@@ -68,6 +73,7 @@ use URI;
 
 use base 'Exporter';
 our @EXPORT_OK = qw(
+  for_each_patchset
   stream_events
   git_environment
   next_change_id
@@ -79,6 +85,12 @@ our @EXPORT_OK = qw(
 
 our @SSH     = ('ssh');
 our $VERSION = 20121123;
+our $DEBUG   = !!$ENV{GERRIT_CLIENT_DEBUG};
+
+sub _debug_print {
+  return unless $DEBUG;
+  print STDERR __PACKAGE__ . ': ', @_, "\n";
+}
 
 # parses a gerrit URL and returns a hashref with following keys:
 #   cmd => arrayref, base ssh command for interacting with gerrit
@@ -162,6 +174,7 @@ errors.
 =back
 
 =cut
+
 sub stream_events {
   my (%args) = @_;
 
@@ -234,7 +247,7 @@ sub stream_events {
       }
     );
     $handle->{r_h_stderr} = AnyEvent::Handle->new( fh => $r2, );
-    $handle->{r_h_stderr}->on_error( sub {} );
+    $handle->{r_h_stderr}->on_error( sub { } );
     $handle->{warn_on_stderr} = 1;
 
     # run stream-events with stdout connected to pipe ...
@@ -298,6 +311,155 @@ sub stream_events {
   return $out;
 }
 
+=item B<< for_each_patchset(url => $url, workdir => $workdir, ...) >>
+
+Set up a high-level event watcher to invoke a custom callback or
+command for each existing or incoming patch set on Gerrit. This method
+is suitable for performing automated testing or sanity checks on
+incoming patches.
+
+For each patch set, a git repository is set up with the working tree
+and HEAD set to the patch. The callback is invoked with the current
+working directory set to the top level of this git repository.
+
+Returns a guard object. Event processing terminates when the object is
+destroyed.
+
+Options:
+
+=over
+
+=item B<url>
+
+The Gerrit ssh URL, e.g. C<ssh://user@gerrit.example.com:29418/>. Mandatory.
+
+=item B<workdir>
+
+The top-level working directory under which git repositories and other data
+should be stored. Mandatory. Will be created if it does not exist.
+
+The working directory is persistent across runs. Removing the
+directory may cause the processing of patch sets which have already
+been processed.
+
+=item B<< on_patchset => $sub->($change, $patchset) >>
+
+=item B<< on_patchset_fork => $sub->($change, $patchset) >>
+
+=item B<< on_patchset_cmd> => $sub->($change, $patchset) | $cmd_ref >>
+
+Callbacks invoked for each patchset. Only one of the above callback
+forms may be used.
+
+=over
+
+=item *
+
+B<on_patchset> invokes a subroutine in the current process. The callback
+is blocking, which means that only one patch may be processed at a
+time. This is the simplest form and is suitable when the processing
+for each patch is expected to be fast or the rate of incoming patches
+is low.
+
+=item *
+
+B<on_patchset_fork> invokes a subroutine in a new child process. The
+child terminates when the callback returns. Multiple patches may be
+handled in parallel.
+
+The caveats which apply to C<AnyEvent::Util::run_cmd> also apply here;
+namely, it is not permitted to run the event loop in the child process.
+
+=item *
+
+B<on_patchset_cmd> runs a command to handle the patch.
+Multiple patches may be handled in parallel.
+
+The argument to B<on_patchset_cmd> may be either a reference to an array
+holding the command and its arguments, or a reference to a subroutine
+which generates and returns an array for the command and its arguments.
+
+=back
+
+All on_patchset callbacks receive B<change> and B<patchset> hashref arguments.
+Note that a change may hold several patchsets.
+
+=item B<< review => 0 | 1 | 'code-review' | 'verified' | ... >>
+
+If false (the default), patch sets are not automatically reviewed
+(though they may be reviewed explicitly within the B<on_patchset_...>
+callbacks).
+
+If true, any output (stdout or stderr) from the B<on_patchset_...> callback
+will be captured and posted as a review message. If there is no output,
+no message is posted.
+
+If a string is passed, it is construed as a Gerrit approval category
+and a review score will be posted in that category. The score comes
+from the return value of the callback (or exit code in the case of
+B<on_patchset_cmd>).
+
+=back
+
+=cut
+
+sub for_each_patchset {
+  my (%args) = @_;
+
+  $args{url} || croak 'missing url argument';
+       $args{on_patchset}
+    || $args{on_patchset_cmd}
+    || $args{on_patchset_fork}
+    || croak 'missing on_patchset{_cmd,_fork} argument';
+  $args{workdir} || croak 'missing workdir argument';
+  $args{on_error} ||= sub { warn __PACKAGE__, ': ', @_ };
+
+  if ( !-d $args{workdir} ) {
+    mkpath( $args{workdir} );
+  }
+
+  require "Gerrit/Client/ForEach.pm";
+  my $self = bless {}, 'Gerrit::Client::ForEach';
+  $self->{args} = \%args;
+
+  my $weakself = $self;
+  weaken($weakself);
+
+  $self->{stream} = Gerrit::Client::stream_events(
+    url      => $args{url},
+    on_event => sub {
+      $weakself->_handle_for_each_event( $_[1] );
+    },
+
+    # TODO: on error, issue a query to automatically find any missed changes?
+  );
+
+  # stream_events takes care of incoming changes, perform a query to find
+  # existing changes
+  query(
+    'status:open',
+    url               => $args{url},
+    current_patch_set => 1,
+    on_error          => $args{on_error},
+    on_success        => sub {
+      return unless $weakself;
+      my (@results) = @_;
+      foreach my $change (@results) {
+
+        # simulate patch set creation
+        my ($event) = {
+          type     => 'patchset-created',
+          change   => $change,
+          patchSet => delete $change->{currentPatchSet},
+        };
+        $weakself->_handle_for_each_event($event);
+      }
+    },
+  );
+
+  return $self;
+}
+
 =item B<random_change_id>
 
 Returns a random Change-Id (the character 'I' followed by 40
@@ -305,6 +467,7 @@ hexadecimal digits), suitable for usage as the Change-Id field in a
 commit to be pushed to gerrit.
 
 =cut
+
 sub random_change_id {
   return 'I' . sprintf(
 
@@ -341,6 +504,7 @@ If any problems occur while determining the next Change-Id, a warning
 is printed and a random Change-Id is returned.
 
 =cut
+
 sub next_change_id {
   if ( !$ENV{GIT_AUTHOR_NAME} || !$ENV{GIT_AUTHOR_EMAIL} ) {
     carp __PACKAGE__ . ': git environment is not set, using random Change-Id';
@@ -348,7 +512,7 @@ sub next_change_id {
   }
 
   # First preference: change id is the last SHA used by this bot.
-  my $author    = "$ENV{ GIT_AUTHOR_NAME } <$ENV{ GIT_AUTHOR_EMAIL }>";
+  my $author    = "$ENV{GIT_AUTHOR_NAME} <$ENV{GIT_AUTHOR_EMAIL}>";
   my $change_id = qx(git rev-list -n1 --fixed-strings "--author=$author" HEAD);
   if ( my $error = $? ) {
     carp __PACKAGE__ . qq{: no previous commits from "$author" were found};
@@ -439,11 +603,12 @@ example:
     (system('git add -u *.cpp') == 0)
       || die 'git add failed';
     (system('git', 'commit', '-m', $message) == 0)
-      || die "git commit failed";
+      || die 'git commit failed';
     (system('git push gerrit HEAD:refs/for/master') == 0)
-      || die "git push failed";
+      || die 'git push failed';
 
 =cut
+
 sub git_environment {
   my (%options) = validate(
     @_,
@@ -540,6 +705,7 @@ on the given site.
 =back
 
 =cut
+
 sub review {
   my $commit_or_change = shift;
   my (%options) = validate(
