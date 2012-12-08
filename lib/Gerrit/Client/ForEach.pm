@@ -3,6 +3,7 @@ use strict;
 use warnings;
 
 use AnyEvent::Util;
+use Capture::Tiny qw(capture_merged);
 use Data::Alias;
 use Data::Dumper;
 use English qw(-no_match_vars);
@@ -130,8 +131,10 @@ sub _ensure_cmd {
   my $event = $args{event};
   my $name  = $args{name};
 
-  my $donekey = "_cmd_${name}_done";
-  my $cvkey   = "_cmd_${name}_cv";
+  my $donekey   = "_cmd_${name}_done";
+  my $cvkey     = "_cmd_${name}_cv";
+  my $statuskey = "_cmd_${name}_status";
+  my $outputkey = "_cmd_${name}_output";
 
   return 1 if ( $event->{$donekey} );
 
@@ -157,10 +160,21 @@ sub _ensure_cmd {
       return 1;
     }
 
+    my $printoutput = sub { _debug_print( "$cmdstr: ", @_ ) };
+    my $handleoutput = $printoutput;
+
+    if ( $args{saveoutput} ) {
+      $handleoutput = sub {
+        $printoutput->(@_);
+        $event->{$outputkey} .= $_[0];
+      };
+    }
+
     my %run_cmd_args = (
-      '>'  => sub { _debug_print( "$cmdstr: ", @_ ) },
-      '2>' => sub { _debug_print( "$cmdstr: ", @_ ) },
+      '>'  => $handleoutput,
+      '2>' => $handleoutput,
     );
+
     if ( $args{wd} ) {
       $run_cmd_args{on_prepare} = sub {
         chdir( $args{wd} ) || warn __PACKAGE__ . ": chdir $args{wd}: $!";
@@ -172,12 +186,13 @@ sub _ensure_cmd {
       sub {
         my ($cv) = @_;
         my $status = $cv->recv();
-        if ($status) {
+        if ( $status && !$args{allownonzero} ) {
           warn __PACKAGE__ . ": $name exited with status $status\n";
         }
         else {
           $event->{$donekey} = 1;
         }
+        $event->{$statuskey} = $status;
         $weakself->_dequeue();
       }
     );
@@ -197,9 +212,23 @@ sub _ensure_cmd {
 sub _do_cb_sub {
   my ( $self, $sub, $event ) = @_;
 
-  local $CWD = $event->{_workdir};
-  $sub->( $event->{change}, $event->{patchSet} );
-  return;
+  my $score;
+  my $run = sub {
+    local $CWD = $event->{_workdir};
+    $score = $sub->( $event->{change}, $event->{patchSet} );
+  };
+
+  my $output;
+  if ($self->{args}{review}) {
+    $output = &capture_merged( $run );
+  } else {
+    $run->();
+  }
+
+  return {
+    score => $score,
+    output => $output
+  };
 }
 
 sub _do_cb_forksub {
@@ -208,7 +237,9 @@ sub _do_cb_forksub {
   my $weakself = $self;
   weaken($weakself);
 
-  return if $event->{_done};
+  if ($event->{_forksub_result}) {
+    return $event->{_forksub_result};
+  }
 
   if ( $event->{_forked} ) {
     push @{$queue}, $event;
@@ -216,13 +247,21 @@ sub _do_cb_forksub {
   }
 
   $event->{_forked} = 1;
-  local $CWD = $event->{_workdir};
   &fork_call(
+    \&_do_cb_sub,
+    $self,
     $sub,
-    $event->{change},
-    $event->{patchSet},
+    $event,
     sub {
-      $event->{_done} = 1;
+      my ($result) = $_[0];
+      if (!$result) {
+        if ($@) {
+          $result = {output => $@};
+        } else {
+          $result = {output => $!};
+        }
+      }
+      $event->{_forksub_result} = $result;
       $weakself->_dequeue();
     }
   );
@@ -247,28 +286,59 @@ sub _do_cb_cmd {
     _debug_print "on_patch_cmd for $project $ref: [@{$cmd}]\n";
   }
 
-  return $self->_ensure_cmd(
+  return unless $self->_ensure_cmd(
     event => $event,
     queue => $out,
     name  => 'on_patch_cmd',
     cmd   => $event->{_cmd},
     wd    => $event->{_workdir},
+    saveoutput => $self->{args}{review},
+    allownonzero => 1,
   );
+
+  my $score = 0;
+  my $output = $event->{_cmd_on_patch_cmd_output};
+  my $status = $event->{_cmd_on_patch_cmd_status};
+
+  if ($status == -1) {
+    # exited abnormally; treat as neutral score
+  } elsif ($status & 127) {
+    # exited due to signal; treat as neutral score,
+    # append signal to output
+    $output .= "\n[exited due to signal ".($status&127)."]\n";
+  } else {
+    # exited normally; exit code is score
+    $score = $status >> 8;
+    # interpret exit code as signed
+    if ($score > 127) {
+      $score = $score - 256;
+    }
+  }
+
+  return {
+    score => $score,
+    output => $output
+  };
 }
 
 sub _do_callback {
   my ( $self, $event, $out ) = @_;
 
-  if ( my $subref = $self->{args}{on_patch} ) {
-    return $self->_do_cb_sub( $subref, $event );
+  my $ref;
+  my $result;
+
+  if ( $ref = $self->{args}{on_patch} ) {
+    $result = $self->_do_cb_sub( $ref, $event );
+  }
+  elsif ( $ref = $self->{args}{on_patch_fork} ) {
+    $result = $self->_do_cb_forksub( $ref, $event, $out );
+  }
+  elsif ( $ref = $self->{args}{on_patch_cmd} ) {
+    $result = $self->_do_cb_cmd( $ref, $event, $out );
   }
 
-  if ( my $subref = $self->{args}{on_patch_fork} ) {
-    return $self->_do_cb_forksub( $subref, $event, $out );
-  }
-
-  if ( my $ref = $self->{args}{on_patch_cmd} ) {
-    return $self->_do_cb_cmd( $ref, $event, $out );
+  if ($result && $Gerrit::Client::DEBUG) {
+    _debug_print 'callback result: '.Dumper($result);
   }
 }
 

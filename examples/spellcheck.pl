@@ -37,15 +37,17 @@ sub check_patch {
 
 sub run_daemon {
   my $url;
-  GetOptions( 'url=s' => \$url ) || die;
+  my $style = 'sub';
+  GetOptions( 'url=s' => \$url, 'style=s' => \$style, ) || die;
   $url || die 'missing mandatory --url argument';
 
   my $stream = for_each_patch(
     url => $url,
 
-    on_patch_cmd => [ $EXECUTABLE_NAME, $script ],
-#    on_patch => \&check_patch,
-#    on_patch_fork => \&check_patch,
+    ($style eq 'cmd' ? (on_patch_cmd => [ $EXECUTABLE_NAME, $script ]) : ()),
+    ($style eq 'sub' ? (on_patch => \&check_patch) : ()),
+    ($style eq 'fork' ? (on_patch_fork => \&check_patch) : ()),
+
     workdir => $workdir,
     review => 1,
   );
@@ -58,7 +60,7 @@ sub run {
   if ($daemon) {
     return run_daemon();
   }
-  return check_patch();
+  exit check_patch();
 }
 
 run() unless caller;
