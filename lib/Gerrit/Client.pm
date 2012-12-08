@@ -72,6 +72,7 @@ our @EXPORT_OK = qw(
   next_change_id
   random_change_id
   review
+  quote
 );
 
 our @SSH     = ('ssh');
@@ -109,16 +110,6 @@ sub _gerrit_parse_url {
     ],
     project => $project,
   };
-}
-
-# quotes an argument to be passed to gerrit, if necessary.
-sub _quote_gerrit_arg {
-  my ($string) = @_;
-  if ( $string !~ m{ } ) {
-    return $string;
-  }
-  $string =~ s{'}{}g;
-  return qq{'$string'};
 }
 
 =head1 FUNCTIONS
@@ -588,7 +579,7 @@ sub review {
       }
     }
     elsif ( defined($value) ) {
-      push @cmd, $cmd_key, _quote_gerrit_arg($value);
+      push @cmd, $cmd_key, quote($value);
     }
   }
 
@@ -617,6 +608,30 @@ sub review {
   );
 
   return;
+}
+
+=item B<< quote $string >>
+
+Returns a copy of the input string with special characters escaped, suitable
+for usage with Gerrit CLI commands.
+
+Gerrit commands run via ssh typically need extra quoting because the ssh layer
+already evaluates the command string prior to passing it to Gerrit.
+This function understands how to quote arguments for this case.
+
+B<Note:> do not use this function for passing arguments to other Gerrit::Client
+functions; those perform appropriate quoting internally.
+
+=cut
+
+sub quote {
+  my ($string) = @_;
+
+  # character set comes from gerrit source:
+  # gerrit-sshd/src/main/java/com/google/gerrit/sshd/CommandFactoryProvider.java
+  # 'split' function
+  $string =~ s{([\t "'\\])}{\\$1}g;
+  return $string;
 }
 
 =back
