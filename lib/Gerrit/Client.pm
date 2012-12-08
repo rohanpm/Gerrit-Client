@@ -570,6 +570,9 @@ sub review {
   # project can be filled in by explicit 'project' argument, or from
   # URL, or left blank
   $options{project} ||= $parsed_url->{project};
+  if (!$options{project}) {
+    delete $options{project};
+  }
 
   while ( my ( $key, $spec ) = each %GERRIT_REVIEW_OPTIONS ) {
     my $value = $options{$key};
