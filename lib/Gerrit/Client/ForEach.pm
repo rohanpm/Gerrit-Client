@@ -337,9 +337,30 @@ sub _do_callback {
     $result = $self->_do_cb_cmd( $ref, $event, $out );
   }
 
-  if ($result && $Gerrit::Client::DEBUG) {
+  return unless $result;
+
+  if ($Gerrit::Client::DEBUG) {
     _debug_print 'callback result: '.Dumper($result);
   }
+
+  my $review = $self->{args}{review};
+  return unless $review;
+
+  if ($review =~ m{\A\d+\z}) {
+    $review = 'code_review';
+  }
+
+  if (!$result->{output} && !$result->{score}) {
+    # no review to be done
+    return;
+  }
+
+  Gerrit::Client::review(
+    $event->{patchSet}{revision},
+    url => $self->{args}{url},
+    message => $result->{output},
+    $review => $result->{score},
+  );
 }
 
 sub _dequeue {
