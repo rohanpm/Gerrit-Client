@@ -26,7 +26,8 @@ sub check_patch {
     }
   }
   if (!@errors) {
-    print "No spelling errors found.\n";
+    print "No spelling errors found in:\n";
+    system("git --no-pager log -n1");
     return 0;
   }
   local $LIST_SEPARATOR = "\n  ";
@@ -45,7 +46,8 @@ sub run_daemon {
 #    on_patch_cmd => [ $EXECUTABLE_NAME, $script ],
 #    on_patch => \&check_patch,
     on_patch_fork => \&check_patch,
-    workdir  => $workdir,
+    workdir => $workdir,
+    review => 1,
   );
   AE::cv()->recv();
 }
