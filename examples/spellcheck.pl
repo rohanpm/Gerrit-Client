@@ -43,9 +43,9 @@ sub run_daemon {
   my $stream = for_each_patch(
     url => $url,
 
-#    on_patch_cmd => [ $EXECUTABLE_NAME, $script ],
+    on_patch_cmd => [ $EXECUTABLE_NAME, $script ],
 #    on_patch => \&check_patch,
-    on_patch_fork => \&check_patch,
+#    on_patch_fork => \&check_patch,
     workdir => $workdir,
     review => 1,
   );

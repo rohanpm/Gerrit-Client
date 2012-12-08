@@ -104,7 +104,7 @@ sub _ensure_git_workdir_uptodate {
     name  => 'git clone for workdir',
     cmd   => [ 'git', 'clone', $gitdir, $workdir ],
     onlyif => sub { !-d "$workdir/.git" },
-  );
+    );
 
   return
     unless $self->_ensure_cmd(
@@ -112,15 +112,15 @@ sub _ensure_git_workdir_uptodate {
     queue => $out,
     name  => 'git fetch for workdir',
     cmd   => [ 'git', 'fetch', '-v', 'origin', "+$ref:$ref" ],
-    wd => $workdir,
-  );
+    wd    => $workdir,
+    );
 
   return $self->_ensure_cmd(
     event => $event,
     queue => $out,
     name  => 'git reset for workdir',
     cmd   => [ 'git', 'reset', '--hard', $ref ],
-    wd => $workdir,
+    wd    => $workdir,
   );
 }
 
@@ -194,6 +194,84 @@ sub _ensure_cmd {
   return;
 }
 
+sub _do_cb_sub {
+  my ( $self, $sub, $event ) = @_;
+
+  local $CWD = $event->{_workdir};
+  $sub->( $event->{change}, $event->{patchSet} );
+  return;
+}
+
+sub _do_cb_forksub {
+  my ( $self, $sub, $event, $queue ) = @_;
+
+  my $weakself = $self;
+  weaken($weakself);
+
+  return if $event->{_done};
+
+  if ( $event->{_forked} ) {
+    push @{$queue}, $event;
+    return;
+  }
+
+  $event->{_forked} = 1;
+  local $CWD = $event->{_workdir};
+  &fork_call(
+    $sub,
+    $event->{change},
+    $event->{patchSet},
+    sub {
+      $event->{_done} = 1;
+      $weakself->_dequeue();
+    }
+  );
+  push @{$queue}, $event;
+  return;
+}
+
+sub _do_cb_cmd {
+  my ( $self, $cmd, $event, $out ) = @_;
+
+  return if ( $event->{_done} );
+
+  my $project = $event->{change}{project};
+  my $ref     = $event->{patchSet}{ref};
+
+  if ( !$event->{_cmd} ) {
+    if ( $cmd && ref($cmd) eq 'CODE' ) {
+      $cmd = [ $cmd->( $event->{change}, $event->{patchSet} ) ];
+    }
+    $event->{_cmd} = $cmd;
+    local $LIST_SEPARATOR = '] [';
+    _debug_print "on_patch_cmd for $project $ref: [@{$cmd}]\n";
+  }
+
+  return $self->_ensure_cmd(
+    event => $event,
+    queue => $out,
+    name  => 'on_patch_cmd',
+    cmd   => $event->{_cmd},
+    wd    => $event->{_workdir},
+  );
+}
+
+sub _do_callback {
+  my ( $self, $event, $out ) = @_;
+
+  if ( my $subref = $self->{args}{on_patch} ) {
+    return $self->_do_cb_sub( $subref, $event );
+  }
+
+  if ( my $subref = $self->{args}{on_patch_fork} ) {
+    return $self->_do_cb_forksub( $subref, $event, $out );
+  }
+
+  if ( my $ref = $self->{args}{on_patch_cmd} ) {
+    return $self->_do_cb_cmd( $ref, $event, $out );
+  }
+}
+
 sub _dequeue {
   my ($self) = @_;
 
@@ -206,75 +284,10 @@ sub _dequeue {
 
   my @newqueue;
   foreach my $event ( @{ $self->{queue} || [] } ) {
-    my $project = $event->{change}{project};
-    my $ref     = $event->{patchSet}{ref};
-
     next unless $self->_ensure_git_cloned( $event, \@newqueue );
     next unless $self->_ensure_git_fetched( $event, \@newqueue );
     next unless $self->_ensure_git_workdir_uptodate( $event, \@newqueue );
-
-    if ( $self->{args}{on_patch} ) {
-      local $CWD = $event->{_workdir};
-      $self->{args}{on_patch}->( $event->{change}, $event->{patchSet} );
-      next;
-    }
-    elsif ( $self->{args}{on_patch_fork} ) {
-      if ( !$event->{_forked} ) {
-        $event->{_forked} = 1;
-        local $CWD = $event->{_workdir};
-        &fork_call(
-          $self->{args}{on_patch_fork},
-          $event->{change},
-          $event->{patchSet},
-          sub {
-            $event->{_done} = 1;
-            $weakself->_dequeue();
-          }
-        );
-        push @newqueue, $event;
-      }
-      elsif ( !$event->{_done} ) {
-        push @newqueue, $event;
-      }
-      next;
-    }
-    elsif ( $self->{args}{on_patch_cmd} ) {
-      if ( !$event->{_done} ) {
-        my $cmd = $self->{args}{on_patch_cmd};
-        if ( !$event->{_cmd_cv} ) {
-          if ( $cmd && ref($cmd) eq 'CODE' ) {
-            $cmd = [ $cmd->( $event->{change}, $event->{patchSet} ) ];
-          }
-
-          {
-            local $LIST_SEPARATOR = '] [';
-            _debug_print "on_patch_cmd for $project $ref: [@{$cmd}]\n";
-          }
-
-          $event->{_cmd_cv} =
-            AnyEvent::Util::run_cmd( $cmd,
-            on_prepare => sub { chdir( $event->{_workdir} ) } );
-
-          $event->{_cmd_cv}->cb(
-            sub {
-              my ($cv) = @_;
-              my $status = $cv->recv();
-              _debug_print
-                "on_patch_cmd for $project $ref exited with status $status\n";
-              if ($status) {
-                $weakself->{args}{on_error}->(
-                  "on_patch_cmd for $project $ref exited with status $status");
-              }
-              $event->{_done} = 1;
-              $weakself->_dequeue();
-            }
-          );
-        }
-        push @newqueue, $event;
-        next;
-      }
-    }
-
+    $self->_do_callback( $event, \@newqueue );
   }
 
   $self->{queue} = \@newqueue;
