@@ -61,6 +61,7 @@ use AnyEvent::Util;
 use AnyEvent;
 use Carp;
 use English qw(-no_match_vars);
+use JSON;
 use Params::Validate qw(:all);
 use Scalar::Util qw(weaken);
 use URI;
@@ -72,6 +73,7 @@ our @EXPORT_OK = qw(
   next_change_id
   random_change_id
   review
+  query
   quote
 );
 
@@ -604,6 +606,156 @@ sub review {
 
       # make sure we stay alive until this callback is executed
       undef $cv;
+    }
+  );
+
+  return;
+}
+
+# options to Gerrit::Client::query which map directly to options to
+# "ssh <somegerrit> gerrit query ..."
+my %GERRIT_QUERY_OPTIONS = (
+  ( map { $_ => { type => BOOLEAN, default => 0 } } qw(
+    all_approvals
+    comments
+    commit_message
+    current_patch_set
+    dependencies
+    files
+    patch_sets
+    submit_records
+  ))
+);
+
+=item B<< query $query, url => $gerrit_url, ... >>
+
+Wrapper for the `gerrit query' command; send a query to gerrit
+and invoke a callback with the results.
+
+$query is the Gerrit query string, whose format is described in L<the
+Gerrit
+documentation|https://gerrit.googlecode.com/svn/documentation/2.2.1/user-search.html>.
+"status:open age:1week" is an example of a simple Gerrit query.
+
+$url is the URL with ssh schema of the Gerrit site to be queried
+(e.g. "ssh://user@gerrit.example.com:29418/").
+If the URL contains a path (project) component, it is ignored.
+
+All other arguments are optional, and include:
+
+=over
+
+=item B<< on_success => $cb->( @results ) >>
+
+Callback invoked when the query completes.
+
+Each element of @results is a hashref representing a Gerrit change,
+parsed from the JSON output of `gerrit query'. The format of Gerrit
+change objects is described in L<the Gerrit documentation|
+https://gerrit.googlecode.com/svn/documentation/2.2.1/json.html>.
+
+=item B<< on_error => $cb->( $query, $error ) >>
+
+Callback invoked when the query command fails.
+$error is a human-readable string describing the error.
+
+=item B<< all_approvals => 0|1 >>
+
+=item B<< comments => 0|1 >>
+
+=item B<< commit_message => 0|1 >>
+
+=item B<< current_patch_set => 0|1 >>
+
+=item B<< dependencies => 0|1 >>
+
+=item B<< files => 0|1 >>
+
+=item B<< patch_sets => 0|1 >>
+
+=item B<< submit_records => 0|1 >>
+
+These options are passed to the `gerrit query' command and may be used
+to increase the level of information returned by the query.
+For information on their usage, please see the output of `gerrit query
+--help' on your gerrit installation, or see L<the Gerrit
+documentation|http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-query.html>.
+
+=back
+
+=cut
+
+sub query
+{
+  my $query = shift;
+  my (%options) = validate(
+    @_,
+    { url        => 1,
+      on_success => { type => CODEREF, default => undef },
+      on_error   => {
+        type    => CODEREF,
+        default => sub {
+          my ( $c, @rest ) = @_;
+          warn __PACKAGE__ . "::query: error (for $c): ", @rest;
+          }
+      },
+      %GERRIT_QUERY_OPTIONS,
+    }
+  );
+
+  my $parsed_url = _gerrit_parse_url( $options{url} );
+  my @cmd = ( @{ $parsed_url->{cmd} }, 'query', '--format', 'json' );
+
+  while ( my ( $key, $spec ) = each %GERRIT_QUERY_OPTIONS ) {
+    my $value = $options{$key};
+    next unless $value;
+
+    # some_option -> --some-option
+    my $cmd_key = $key;
+    $cmd_key =~ s{_}{-}g;
+    $cmd_key = "--$cmd_key";
+
+    push @cmd, $cmd_key;
+  }
+
+  push @cmd, quote( $query );
+
+  my $output;
+  my $cv = AnyEvent::Util::run_cmd( \@cmd, '>' => \$output );
+
+  my $cmdstr;
+  {
+    local $LIST_SEPARATOR = '] [';
+    $cmdstr = "[@cmd]";
+  }
+
+  $cv->cb(
+    sub {
+      # make sure we stay alive until this callback is executed
+      undef $cv;
+
+      my $status = shift->recv();
+      if ( $status && $options{on_error} ) {
+        $options{on_error}
+          ->( $query, "$cmdstr exited with status $status" );
+        return;
+      }
+
+      return unless $options{on_success};
+
+      my @results;
+      foreach my $line (split /\n/, $output) {
+        my $data = eval { decode_json($line) };
+        if ($EVAL_ERROR) {
+          $options{on_error}->( $query, "error parsing result `$line': $EVAL_ERROR" );
+          return;
+        }
+        next if ($data->{type} && $data->{type} eq 'stats');
+        push @results, $data;
+      }
+
+      $options{on_success}->(@results);
+      return;
     }
   );
 
