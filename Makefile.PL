@@ -14,6 +14,7 @@ WriteMakefile(
   CONFIGURE_REQUIRES => { 'ExtUtils::MakeMaker' => 0, },
   BUILD_REQUIRES     => {
     'Capture::Tiny'   => 0,
+    'Dir::Self'       => 0,
     'Env::Path'       => 0,
     'File::chdir'     => 0,
     'LWP'             => 0,

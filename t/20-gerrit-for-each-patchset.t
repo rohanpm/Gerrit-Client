@@ -3,15 +3,17 @@ use strict;
 use warnings;
 
 use AnyEvent;
-use Capture::Tiny qw(capture_merged);
-use Data::Dumper;
+use AnyEvent::Socket;
+use AnyEvent::Handle;
+use AnyEvent::Util;
+use Dir::Self;
 use English qw( -no_match_vars );
 use Env::Path;
+use File::Basename;
 use File::Temp;
 use File::chdir;
 use Gerrit::Client;
 use Gerrit::Client::Test;
-use IO::File;
 use JSON;
 use Sub::Override;
 use Test::More;
@@ -21,56 +23,34 @@ use Test::Warn;
 # load it now for mocking
 use Gerrit::Client::ForEach;
 
-
-my $CHANGE_ID_RE = qr{I[a-f0-9]{40}};
-
-# like system(), but fails the test and shows the command output
-# if the command fails
-sub system_or_fail {
-  my (@cmd) = @_;
-  my $status;
-  my $output = capture_merged {
-    $status = system(@cmd);
-  };
-  is( $status, 0 )
-    || diag "command [@cmd] exited with status $status\noutput:\n$output";
-  return;
-}
-
-# create a file with the given $filename, or fail
-sub touch {
-  my ($filename) = @_;
-  ok( IO::File->new( $filename, '>>' ), "open $filename" )
-    || diag "open $filename failed: $!";
-  return;
-}
+# Pipe ends used for communication between parent and child
+my %pipe;
 
 # mock git commands which succeed but don't do much
-sub mock_gits_ok
-{
+sub mock_gits_ok {
   return [
     Sub::Override->new(
       'Gerrit::Client::ForEach::_git_bare_clone_cmd' => sub {
-        my (undef, $giturl, $gitdir) = @_;
-        return ('git', 'init', '--bare', $gitdir);
+        my ( undef, $giturl, $gitdir ) = @_;
+        return ( 'git', 'init', '--bare', $gitdir );
       }
     ),
     Sub::Override->new(
       'Gerrit::Client::ForEach::_git_clone_cmd' => sub {
-        my (undef, $giturl, $gitdir) = @_;
-        return ('git', 'init', $gitdir);
+        my ( undef, $giturl, $gitdir ) = @_;
+        return ( 'git', 'init', $gitdir );
       }
     ),
     Sub::Override->new(
       'Gerrit::Client::ForEach::_git_fetch_cmd' => sub {
-        my (undef, $giturl, $gitdir, $ref) = @_;
-        return ('perl', '-e1');
+        my ( undef, $giturl, $gitdir, $ref ) = @_;
+        return ( 'perl', '-e1' );
       }
     ),
     Sub::Override->new(
       'Gerrit::Client::ForEach::_git_reset_cmd' => sub {
-        my (undef, $ref) = @_;
-        return ('perl', '-e1');
+        my ( undef, $ref ) = @_;
+        return ( 'perl', '-e1' );
       }
     ),
   ];
@@ -83,45 +63,50 @@ my $test_rev3 = 'ccc5609f8b97fd8c9c29d7576d46b8eba99c11ac';
 my $test_rev4 = 'ddd5609f8b97fd8c9c29d7576d46b8eba99c11ac';
 my $test_rev5 = 'eee5609f8b97fd8c9c29d7576d46b8eba99c11ac';
 
-my $test_ps1 = { number => 1, revision => $test_rev1, ref => 'refs/changes/02/2/1' };
-my $test_ps2 = { number => 2, revision => $test_rev2, ref => 'refs/changes/01/1/2' };
-my $test_ps3 = { number => 3, revision => $test_rev3, ref => 'refs/changes/06/6/3' };
-my $test_ps4 = { number => 4, revision => $test_rev4, ref => 'refs/changes/07/7/4' };
-my $test_ps5 = { number => 5, revision => $test_rev5, ref => 'refs/changes/07/7/5' };
+my $test_ps1 =
+  { number => 1, revision => $test_rev1, ref => 'refs/changes/02/2/1' };
+my $test_ps2 =
+  { number => 2, revision => $test_rev2, ref => 'refs/changes/01/1/2' };
+my $test_ps3 =
+  { number => 3, revision => $test_rev3, ref => 'refs/changes/06/6/3' };
+my $test_ps4 =
+  { number => 4, revision => $test_rev4, ref => 'refs/changes/07/7/4' };
+my $test_ps5 =
+  { number => 5, revision => $test_rev5, ref => 'refs/changes/07/7/5' };
 
 my $test_change1 = {
-  project => "prj1",
-  branch  => "master",
-  id      => "id1",
-  subject => 'Some commit',
+  project         => "prj1",
+  branch          => "master",
+  id              => "id1",
+  subject         => 'Some commit',
   currentPatchSet => $test_ps1,
 };
 my $test_change2 = {
-  project => "prj2",
-  branch  => "master",
-  id      => "id2",
-  subject => 'Some other commit',
+  project         => "prj2",
+  branch          => "master",
+  id              => "id2",
+  subject         => 'Some other commit',
   currentPatchSet => $test_ps2,
 };
 my $test_change3 = {
-  project => "prj1",
-  branch  => "master",
-  id      => "id3",
-  subject => 'A great commit',
+  project         => "prj1",
+  branch          => "master",
+  id              => "id3",
+  subject         => 'A great commit',
   currentPatchSet => $test_ps3,
 };
 my $test_change4 = {
-  project => "prj2",
-  branch  => "master",
-  id      => "id4",
-  subject => 'A poor commit',
+  project         => "prj2",
+  branch          => "master",
+  id              => "id4",
+  subject         => 'A poor commit',
   currentPatchSet => $test_ps4,
 };
 my $test_change5 = {
-  project => "prj2",
-  branch  => "master",
-  id      => "id5",
-  subject => 'The best commit',
+  project         => "prj2",
+  branch          => "master",
+  id              => "id5",
+  subject         => 'The best commit',
   currentPatchSet => $test_ps5,
 };
 
@@ -133,11 +118,11 @@ my %test_change_by_id = (
   id5 => $test_change5,
 );
 
-sub patchset_created_json
-{
+sub patchset_created_json {
   my ($change) = @_;
+
   # events do not include the currentPatchSet within change
-  my %copy = %{$change};
+  my %copy     = %{$change};
   my $patchset = delete $copy{currentPatchSet};
   return encode_json(
     { type     => 'patchset-created',
@@ -148,13 +133,14 @@ sub patchset_created_json
 }
 
 my %MOCK_QUERY;
+
 sub mock_query {
-  my ($query, %args) = @_;
-  my $results = shift @{$MOCK_QUERY{$query} || []};
+  my ( $query, %args ) = @_;
+  my $results = shift @{ $MOCK_QUERY{$query} || [] };
   $results ||= [];
-  foreach my $r (@{$results}) {
+  foreach my $r ( @{$results} ) {
     $r = { %{$r} };
-    if (!$args{current_patch_set}) {
+    if ( !$args{current_patch_set} ) {
       delete $r->{currentPatchSet};
     }
   }
@@ -162,14 +148,31 @@ sub mock_query {
   return;
 }
 
+sub record_event {
+  my ( $change, $patchset ) = @_;
+  $pipe{write}->push_write(
+    json => {
+      change   => $change,
+      patchset => $patchset,
+      wd       => "$CWD",
+    }
+  );
+  return;
+}
+
 sub test_for_each_patchset {
+  my ( $testname, %args ) = @_;
+
+  # in cmd mode, we're limited in the event checking we can do
+  my $cmd = $args{on_patchset_cmd};
+
   local %ENV = %ENV;
   my $dir = File::Temp->newdir(
     'perl-gerrit-client-test.XXXXXX',
     TMPDIR  => 1,
     CLEANUP => 1
   );
-  ok( $dir, 'tempdir created' );
+  ok( $dir, "$testname tempdir created" );
   Env::Path->PATH->Prepend("$dir");
 
   # start off with these open patch sets...
@@ -183,12 +186,19 @@ sub test_for_each_patchset {
     directory => $dir,
     sequence  => [
 
-      # simulate various events from a long-lived connection
+      # simulate various events from a long-lived connection which
+      # drops every now and again
+      { delay    => 1,
+        exitcode => 255,
+        stdout   => patchset_created_json($test_change3) . "\n"
+      },
+      { delay    => 1,
+        exitcode => 255,
+        stdout   => patchset_created_json($test_change4) . "\n"
+      },
       { delay    => 30,
         exitcode => 0,
-        stdout   => patchset_created_json($test_change3) . "\n"
-          . patchset_created_json($test_change4) . "\n"
-          . patchset_created_json($test_change5) . "\n"
+        stdout   => patchset_created_json($test_change5) . "\n"
       }
     ],
   );
@@ -198,35 +208,40 @@ sub test_for_each_patchset {
   # make sure we eventually give up if something goes wrong
   my $timeout_timer = AE::timer( 30, 0, sub { $cv->croak('timed out!') } );
   my $done_timer;
-
   my @events;
   my $guard;
-  $guard = Gerrit::Client::for_each_patchset(
-    url         => 'ssh://gerrit.example.com/',
-    workdir     => "$dir/work",
-    on_patchset => sub {
-      my ( $change, $patchset ) = @_;
-      push @events,
-        {
-        change   => $change,
-        patchset => $patchset,
-        wd       => "$CWD",
-        };
+
+  my %readreq;
+  %readreq = (
+    json => sub {
+      my ( $h, $data ) = @_;
+      push @events, $data;
 
       # simulate cancelling the loop after 4 events
       if ( @events >= 4 ) {
         undef $guard;
         $done_timer = AE::timer( 1, 0, sub { $cv->send(); undef $done_timer } );
       }
-    },
+      $h->push_read(%readreq);
+    }
+  );
+
+  $pipe{read}->push_read(%readreq);
+
+  $guard = Gerrit::Client::for_each_patchset(
+    url     => 'ssh://gerrit.example.com/',
+    workdir => "$dir/work",
+    %args,
   );
 
   $cv->recv();
 
-  is( scalar(@events), 4, 'got expected number of events' );
+  is( scalar(@events), 4, "$testname got expected number of events" );
 
   # events may occur in any order, so sort them before comparison
-  @events = sort { $a->{change}{id} cmp $b->{change}{id} } @events;
+  if (!$cmd) {
+    @events = sort { $a->{change}{id} cmp $b->{change}{id} } @events;
+  }
 
   my %seen_wd;
   my %seen_id;
@@ -235,27 +250,91 @@ sub test_for_each_patchset {
     # there should be a unique temporary work directory for each
     # event, all of which no longer exist
     my $wd = delete $e->{wd};
-    ok( !$seen_wd{$wd}, "unique working directory: $wd" );
-    ok( !-e $wd,        "working directory $wd was cleaned up" );
+    ok( !$seen_wd{$wd}, "$testname unique working directory: $wd" );
+    ok( !-e $wd,        "$testname working directory $wd was cleaned up" );
     $seen_wd{$wd} = 1;
 
+    next if ($cmd);
+
     my $id = $e->{change}{id};
-    ok( !$seen_id{$id}, "unique event $id" );
+    ok( !$seen_id{$id}, "$testname unique event $id" );
     $seen_id{$id} = 1;
 
     my %test_change   = %{ $test_change_by_id{$id} };
     my $test_patchset = delete $test_change{currentPatchSet};
-    is_deeply( $e->{change}, \%test_change, "change $id looks ok" )
+    is_deeply( $e->{change}, \%test_change, "$testname change $id looks ok" )
       || diag explain $e->{change};
-    is_deeply( $e->{patchset}, $test_patchset, "patchset $id looks ok" )
+    is_deeply( $e->{patchset}, $test_patchset,
+      "$testname patchset $id looks ok" )
       || diag explain $e->{patchset};
   }
 
   return;
 }
 
+sub test_for_each_patchset_inproc {
+  my ( $r, $w ) = portable_pipe();
+  local $pipe{read}  = AnyEvent::Handle->new( fh => $r );
+  local $pipe{write} = AnyEvent::Handle->new( fh => $w );
+  test_for_each_patchset( 'inproc', on_patchset => \&record_event );
+}
+
+sub test_for_each_patchset_forksub {
+  my ( $r, $w ) = portable_pipe();
+  local $pipe{read}  = AnyEvent::Handle->new( fh => $r );
+  local $pipe{write} = AnyEvent::Handle->new( fh => $w );
+  test_for_each_patchset( 'fork', on_patchset_fork => \&record_event );
+}
+
+sub test_for_each_patchset_cmd {
+  my $script = __DIR__ . '/' . basename(__FILE__);
+
+  my ( $r, $w ) = portable_pipe();
+  local $pipe{read}  = AnyEvent::Handle->new( fh => $r );
+  local $pipe{write} = AnyEvent::Handle->new( fh => $w );
+  my $server = tcp_server undef, undef, sub {
+    my ($fh, $host, $port) = @_;
+
+    my $handle;
+    $handle = AnyEvent::Handle->new(
+      fh => $fh,
+      on_read => sub {
+        my ($h) = @_;
+        $pipe{write}->push_write( delete $h->{rbuf} );
+      },
+      on_eof => sub {
+        undef $handle;
+      },
+    );
+  }, sub {
+    my (undef, undef, $port) = @_;
+    $ENV{TEST_SOCKET_PORT} = $port;
+  };
+
+  test_for_each_patchset( 'cmd',
+    on_patchset_cmd => [ 'perl', $script, 'record_event' ] );
+}
+
+sub record_event_from_child {
+  my $port = $ENV{TEST_SOCKET_PORT} || die;
+  my $cv = AE::cv();
+  tcp_connect(
+    'localhost',
+    $port,
+    sub {
+      my ($fh) = @_;
+      local $pipe{write} = AnyEvent::Handle->new( fh => $fh );
+      $pipe{write}->push_write( json => { wd => "$CWD" } );
+      $cv->send();
+    }
+  );
+  $cv->recv();
+}
+
 sub run_test {
-  test_for_each_patchset;
+  test_for_each_patchset_inproc;
+  test_for_each_patchset_forksub;
+  test_for_each_patchset_cmd;
 
   return;
 }
@@ -263,6 +342,9 @@ sub run_test {
 #==============================================================================
 
 if ( !caller ) {
+  if ( $ARGV[0] && $ARGV[0] eq 'record_event' ) {
+    return record_event_from_child();
+  }
   run_test;
   done_testing;
 }
