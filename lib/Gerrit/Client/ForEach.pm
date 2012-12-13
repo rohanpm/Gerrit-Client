@@ -47,6 +47,32 @@ sub _handle_for_each_event {
   return $self->_dequeue();
 }
 
+# Git command generators; these are methods so that they can be
+# overridden for testing
+sub _git_bare_clone_cmd
+{
+  my (undef, $giturl, $gitdir) = @_;
+  return ('git', 'clone', '--bare', $giturl, $gitdir);
+}
+
+sub _git_clone_cmd
+{
+  my (undef, $giturl, $gitdir) = @_;
+  return ('git', 'clone', $giturl, $gitdir);
+}
+
+sub _git_fetch_cmd
+{
+  my (undef, $giturl, $gitdir, $ref) = @_;
+  return ('git', '--git-dir', $gitdir, 'fetch', '-v', $giturl, "+$ref:$ref");
+}
+
+sub _git_reset_cmd
+{
+  my (undef, $ref) = @_;
+  return ('git', 'reset', '--hard', $ref);
+}
+
 # Returns 1 iff it appears the revision for $event has already been handled
 sub _is_commit_reviewed {
   my ( $self, $event ) = @_;
@@ -140,7 +166,7 @@ sub _ensure_git_cloned {
     event => $event,
     queue => $out,
     name  => 'git clone',
-    cmd   => [ 'git', 'clone', '--bare', $giturl, $gitdir ],
+    cmd => [ $self->_git_bare_clone_cmd( $giturl, $gitdir ) ],
     onlyif => sub { !-d $gitdir },
   );
   return unless $cloned;
@@ -174,7 +200,7 @@ sub _ensure_git_fetched {
     queue => $out,
     name  => 'git fetch',
     cmd =>
-      [ 'git', '--git-dir', $gitdir, 'fetch', '-v', $giturl, "+$ref:$ref" ],
+      [ $self->_git_fetch_cmd( $giturl, $gitdir, $ref ) ],
   );
 }
 
@@ -194,7 +220,7 @@ sub _ensure_git_workdir_uptodate {
     event => $event,
     queue => $out,
     name  => 'git clone for workdir',
-    cmd   => [ 'git', 'clone', $gitdir, $workdir ],
+    cmd => [ $self->_git_clone_cmd( $gitdir, $workdir ) ],
     onlyif => sub { !-d "$workdir/.git" },
     );
 
@@ -203,15 +229,15 @@ sub _ensure_git_workdir_uptodate {
     event => $event,
     queue => $out,
     name  => 'git fetch for workdir',
-    cmd   => [ 'git', 'fetch', '-v', 'origin', "+$ref:$ref" ],
+    cmd => [ $self->_git_fetch_cmd( 'origin', '.', $ref ) ],
     wd    => $workdir,
-    );
+  );
 
   return $self->_ensure_cmd(
     event => $event,
     queue => $out,
     name  => 'git reset for workdir',
-    cmd   => [ 'git', 'reset', '--hard', $ref ],
+    cmd => [ $self->_git_reset_cmd( $ref ) ],
     wd    => $workdir,
   );
 }

@@ -18,6 +18,7 @@ WriteMakefile(
     'File::chdir'     => 0,
     'LWP'             => 0,
     'List::MoreUtils' => 0,
+    'Sub::Override'   => 0,
     'Test::More'      => 0,
     'Test::Warn'      => 0,
   },
