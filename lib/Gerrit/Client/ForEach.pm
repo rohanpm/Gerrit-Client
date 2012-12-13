@@ -149,7 +149,9 @@ sub _ensure_git_cloned {
     $self->{git_cloned}{$gitdir} = 1;
 
     # make sure to wake up any other event who was waiting on the clone
-    AE::postpone { $self->_dequeue() };
+    my $weakself = $self;
+    weaken($weakself);
+    AE::postpone { $weakself && $weakself->_dequeue() };
   }
 
   if ( !-d $gitdir ) {
@@ -274,6 +276,8 @@ sub _ensure_cmd {
     $cmdcv->cb(
       sub {
         my ($cv) = @_;
+        return unless $weakself;
+
         my $status = $cv->recv();
         if ( $status && !$args{allownonzero} ) {
           warn __PACKAGE__ . ": $name exited with status $status\n";
@@ -342,6 +346,8 @@ sub _do_cb_forksub {
     $sub,
     $event,
     sub {
+      return unless $weakself;
+
       my ($result) = $_[0];
       if (!$result) {
         if ($@) {
