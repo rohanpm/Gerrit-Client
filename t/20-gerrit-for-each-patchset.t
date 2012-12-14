@@ -26,6 +26,13 @@ use Gerrit::Client::ForEach;
 # Pipe ends used for communication between parent and child
 my %pipe;
 
+# hash of commits reviewed (used for mocks)
+my %reviewed_commits;
+
+sub clear_reviewed_commits {
+  %reviewed_commits = ();
+}
+
 # mock git commands which succeed but don't do much
 sub mock_gits_ok {
   return [
@@ -51,6 +58,18 @@ sub mock_gits_ok {
       'Gerrit::Client::ForEach::_git_reset_cmd' => sub {
         my ( undef, $ref ) = @_;
         return ( 'perl', '-e1' );
+      }
+    ),
+    Sub::Override->new(
+      'Gerrit::Client::ForEach::_mark_commit_reviewed' => sub {
+        my (undef, $event) = @_;
+        $reviewed_commits{$event->{patchSet}{revision}} = 1;
+      }
+    ),
+    Sub::Override->new(
+      'Gerrit::Client::ForEach::_is_commit_reviewed' => sub {
+        my (undef, $event) = @_;
+        return $reviewed_commits{$event->{patchSet}{revision}};
       }
     ),
   ];
@@ -176,7 +195,7 @@ sub test_for_each_patchset {
   Env::Path->PATH->Prepend("$dir");
 
   # start off with these open patch sets...
-  local $MOCK_QUERY{'status:open'} = [ [ $test_change1, $test_change2 ] ];
+  local $MOCK_QUERY{'status:open'} = [ ([ $test_change1, $test_change2 ]) x 3 ];
   my $mock_query =
     Sub::Override->new( 'Gerrit::Client::query' => \&mock_query );
   my $mock_git = mock_gits_ok();
@@ -333,7 +352,9 @@ sub record_event_from_child {
 
 sub run_test {
   test_for_each_patchset_inproc;
+  clear_reviewed_commits;
   test_for_each_patchset_forksub;
+  clear_reviewed_commits;
   test_for_each_patchset_cmd;
 
   return;
@@ -343,7 +364,8 @@ sub run_test {
 
 if ( !caller ) {
   if ( $ARGV[0] && $ARGV[0] eq 'record_event' ) {
-    return record_event_from_child();
+    record_event_from_child();
+    exit 0;
   }
   run_test;
   done_testing;

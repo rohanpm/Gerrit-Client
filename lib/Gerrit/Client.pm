@@ -425,37 +425,61 @@ sub for_each_patchset {
   my $weakself = $self;
   weaken($weakself);
 
+  # stream_events takes care of incoming changes, perform a query to find
+  # existing changes
+  my $do_query = sub {
+    query(
+      'status:open',
+      url               => $args{url},
+      current_patch_set => 1,
+      on_error          => $args{on_error},
+      on_success        => sub {
+        return unless $weakself;
+        my (@results) = @_;
+        foreach my $change (@results) {
+
+          # simulate patch set creation
+          my ($event) = {
+            type     => 'patchset-created',
+            change   => $change,
+            patchSet => delete $change->{currentPatchSet},
+          };
+          $weakself->_handle_for_each_event($event);
+        }
+      },
+    );
+  };
+
+  # Unfortunately, we have no idea how long it takes between starting the
+  # stream-events command and when the streaming of events begins, so if
+  # we query straight away, we could miss some changes which arrive while
+  # stream-events is e.g. still in ssh negotiation.
+  # Therefore, introduce this arbitrary delay between when we start
+  # stream-events and when we'll perform a query.
+  my $query_timer;
+  my $do_query_soon = sub {
+    $query_timer = AE::timer( 4, 0, $do_query );
+  };
+
   $self->{stream} = Gerrit::Client::stream_events(
     url      => $args{url},
     on_event => sub {
       $weakself->_handle_for_each_event( $_[1] );
     },
+    on_error => sub {
+      my (undef, $error) = @_;
 
-    # TODO: on error, issue a query to automatically find any missed changes?
-  );
+      warn __PACKAGE__ . '::for_each_patchset: '
+        ."connection lost: $error, attempting to recover\n";
 
-  # stream_events takes care of incoming changes, perform a query to find
-  # existing changes
-  query(
-    'status:open',
-    url               => $args{url},
-    current_patch_set => 1,
-    on_error          => $args{on_error},
-    on_success        => sub {
-      return unless $weakself;
-      my (@results) = @_;
-      foreach my $change (@results) {
+      # after a few seconds to allow reconnect, perform the base query again
+      $do_query_soon->();
 
-        # simulate patch set creation
-        my ($event) = {
-          type     => 'patchset-created',
-          change   => $change,
-          patchSet => delete $change->{currentPatchSet},
-        };
-        $weakself->_handle_for_each_event($event);
-      }
+      return 1;
     },
   );
+
+  $do_query_soon->();
 
   return $self;
 }
