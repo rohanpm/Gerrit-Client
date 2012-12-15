@@ -13,7 +13,6 @@ WriteMakefile(
   MIN_PERL_VERSION   => 5.010,
   CONFIGURE_REQUIRES => { 'ExtUtils::MakeMaker' => 0, },
   BUILD_REQUIRES     => {
-    'Capture::Tiny'   => 0,
     'Dir::Self'       => 0,
     'Env::Path'       => 0,
     'File::chdir'     => 0,
@@ -25,6 +24,7 @@ WriteMakefile(
   },
   PREREQ_PM => {
     'AnyEvent'         => 0,
+    'Capture::Tiny'    => 0,
     'Data::Alias'      => 0,
     'File::chdir'      => 0,
     'JSON'             => 0,

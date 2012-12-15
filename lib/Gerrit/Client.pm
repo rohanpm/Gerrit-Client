@@ -59,12 +59,14 @@ use warnings;
 use AnyEvent::Handle;
 use AnyEvent::Util;
 use AnyEvent;
+use Capture::Tiny qw(capture);
 use Carp;
 use Data::Alias;
 use Data::Dumper;
 use English qw(-no_match_vars);
 use File::Path;
 use File::Spec::Functions;
+use File::Temp;
 use File::chdir;
 use JSON;
 use Params::Validate qw(:all);
@@ -83,6 +85,7 @@ our @EXPORT_OK = qw(
   quote
 );
 
+our @GIT     = ('git');
 our @SSH     = ('ssh');
 our $VERSION = 20121123;
 our $DEBUG   = !!$ENV{GERRIT_CLIENT_DEBUG};
@@ -124,6 +127,16 @@ sub _gerrit_parse_url {
     ],
     project => $project,
   };
+}
+
+# Like qx, but takes a list, so no quoting issues
+sub _safeqx
+{
+  my (@cmd) = @_;
+  my $status;
+  my $output = capture { $status = system(@cmd) };
+  $? = $status;
+  return $output;
 }
 
 =head1 FUNCTIONS
@@ -537,7 +550,7 @@ sub next_change_id {
 
   # First preference: change id is the last SHA used by this bot.
   my $author    = "$ENV{GIT_AUTHOR_NAME} <$ENV{GIT_AUTHOR_EMAIL}>";
-  my $change_id = qx(git rev-list -n1 --fixed-strings "--author=$author" HEAD);
+  my $change_id = _safeqx(@GIT, qw(rev-list -n1 --fixed-strings), "--author=$author", 'HEAD');
   if ( my $error = $? ) {
     carp __PACKAGE__ . qq{: no previous commits from "$author" were found};
   }
@@ -548,7 +561,9 @@ sub next_change_id {
   # Second preference: for a stable but random change-id, use hash of the
   # bot name
   if ( !$change_id ) {
-    $change_id = qx(echo "$author" | git hash-object --stdin);
+    my $tempfile = File::Temp->new( 'perl-Gerrit-Client-hash.XXXXXX', TMPDIR => 1, CLEANUP => 1 );
+    $tempfile->printflush( $author );
+    $change_id = _safeqx(@GIT, 'hash-object', "$tempfile");
     if ( my $error = $? ) {
       carp __PACKAGE__ . qq{: git hash-object failed};
     }
@@ -561,7 +576,7 @@ sub next_change_id {
   # This can happen if an author other than ourself has already used the
   # change id.
   if ($change_id) {
-    my $found = qx(git log -n1000 "--grep=I$change_id" HEAD);
+    my $found = _safeqx(@GIT, 'log', '-n1000', "--grep=I$change_id", 'HEAD');
     if ( !$? && $found ) {
       carp __PACKAGE__ . qq{: desired Change-Id $change_id is already used};
       undef $change_id;
@@ -992,6 +1007,17 @@ ssh.
   my $stream = Gerrit::Client::stream_events ...
 
 The default value is C<('ssh')>.
+
+=item B<@Gerrit::Client::GIT>
+
+The git command and initial arguments used when Gerrit::Client invokes
+git.
+
+  # use a local object cache to speed up initial clones
+  local @Gerrit::Client::GIT = ('env', "GIT_ALTERNATE_OBJECT_DIRECTORIES=$ENV{HOME}/gitcache", 'git');
+  my $guard = Gerrit::Client::for_each_patchset ...
+
+The default value is C<('git')>.
 
 =back
 

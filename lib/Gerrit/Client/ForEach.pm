@@ -52,25 +52,25 @@ sub _handle_for_each_event {
 sub _git_bare_clone_cmd
 {
   my (undef, $giturl, $gitdir) = @_;
-  return ('git', 'clone', '--bare', $giturl, $gitdir);
+  return (@Gerrit::Client::GIT, 'clone', '--bare', $giturl, $gitdir);
 }
 
 sub _git_clone_cmd
 {
   my (undef, $giturl, $gitdir) = @_;
-  return ('git', 'clone', $giturl, $gitdir);
+  return (@Gerrit::Client::GIT, 'clone', $giturl, $gitdir);
 }
 
 sub _git_fetch_cmd
 {
   my (undef, $giturl, $gitdir, $ref) = @_;
-  return ('git', '--git-dir', $gitdir, 'fetch', '-v', $giturl, "+$ref:$ref");
+  return (@Gerrit::Client::GIT, '--git-dir', $gitdir, 'fetch', '-v', $giturl, "+$ref:$ref");
 }
 
 sub _git_reset_cmd
 {
   my (undef, $ref) = @_;
-  return ('git', 'reset', '--hard', $ref);
+  return (@Gerrit::Client::GIT, 'reset', '--hard', $ref);
 }
 
 # Returns 1 iff it appears the revision for $event has already been handled
@@ -83,7 +83,7 @@ sub _is_commit_reviewed {
   my $status;
   my $score = capture_merged {
     $status = system(
-      'git',                   '--no-pager',
+      @Gerrit::Client::GIT,    '--no-pager',
       '--git-dir',             $gitdir,
       'notes',                 '--ref',
       'Gerrit-Client-reviews', 'show',
@@ -104,7 +104,7 @@ sub _mark_commit_reviewed {
   my $status;
   my $output = capture_merged {
     $status = system(
-      'git',
+      @Gerrit::Client::GIT,
       '--git-dir',             $gitdir,
       'notes',                 '--ref',
       'Gerrit-Client-reviews', 'append',
@@ -229,7 +229,7 @@ sub _ensure_git_workdir_uptodate {
     event => $event,
     queue => $out,
     name  => 'git fetch for workdir',
-    cmd => [ $self->_git_fetch_cmd( 'origin', '.', $ref ) ],
+    cmd => [ $self->_git_fetch_cmd( 'origin', "$workdir/.git", $ref ) ],
     wd    => $workdir,
   );
 

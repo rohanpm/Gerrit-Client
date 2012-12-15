@@ -909,6 +909,29 @@ sub git_ssh_wrapper {
   return "$self->{ dir }/git_ssh_helper";
 }
 
+=item B<git_wrapper>
+
+Returns the path to a wrapper script for the git command.  The wrapper
+script may be used in place of 'git' to ensure that the correct setup
+is used for passwordless access to this gerrit site.
+
+Useful in conjunction with @Gerrit::Client::GIT to allow Gerrit::Client
+passwordless access to this gerrit:
+
+  local @Gerrit::Client::GIT = ( $gerrit->git_wrapper() );
+  my $stream = Gerrit::Client::stream_events(
+    url => $gerrit->giturl_base(),
+    ...
+  );
+
+=cut
+
+sub git_wrapper {
+  my ($self) = @_;
+  return "$self->{ dir }/git_wrapper";
+}
+
+
 =item B<start_gerrit>
 
 Start the gerrit daemon or add a failure to the test log.
