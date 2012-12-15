@@ -248,6 +248,11 @@ sub _ensure_cmd {
   my $event = $args{event};
   my $name  = $args{name};
 
+  # capture output by default so that we can include it in error messages
+  if (!exists($args{saveoutput})) {
+    $args{saveoutput} = 1;
+  }
+
   my $donekey   = "_cmd_${name}_done";
   my $cvkey     = "_cmd_${name}_cv";
   my $statuskey = "_cmd_${name}_status";
@@ -283,7 +288,7 @@ sub _ensure_cmd {
     if ( $args{saveoutput} ) {
       $handleoutput = sub {
         $printoutput->(@_);
-        $event->{$outputkey} .= $_[0];
+        $event->{$outputkey} .= $_[0] if $_[0];
       };
     }
 
@@ -306,7 +311,8 @@ sub _ensure_cmd {
 
         my $status = $cv->recv();
         if ( $status && !$args{allownonzero} ) {
-          warn __PACKAGE__ . ": $name exited with status $status\n";
+          warn __PACKAGE__ . ": $name exited with status $status\n"
+            . ($event->{$outputkey} ? $event->{$outputkey} : q{});
         }
         else {
           $event->{$donekey} = 1;
