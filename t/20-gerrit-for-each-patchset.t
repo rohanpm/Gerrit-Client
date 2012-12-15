@@ -6,6 +6,7 @@ use AnyEvent;
 use AnyEvent::Socket;
 use AnyEvent::Handle;
 use AnyEvent::Util;
+use Data::Dumper;
 use Dir::Self;
 use English qw( -no_match_vars );
 use Env::Path;
@@ -15,6 +16,7 @@ use File::chdir;
 use Gerrit::Client;
 use Gerrit::Client::Test;
 use JSON;
+use Storable qw(dclone);
 use Sub::Override;
 use Test::More;
 use Test::Warn;
@@ -63,13 +65,26 @@ sub mock_gits_ok {
     Sub::Override->new(
       'Gerrit::Client::ForEach::_mark_commit_reviewed' => sub {
         my (undef, $event) = @_;
+        my $rev = $event->{patchSet}{revision};
+        if (!$rev) {
+          die "bad event: " . Dumper($event);
+        }
+        diag "revision $event->{patchSet}{revision} now reviewed\n";
         $reviewed_commits{$event->{patchSet}{revision}} = 1;
       }
     ),
     Sub::Override->new(
       'Gerrit::Client::ForEach::_is_commit_reviewed' => sub {
         my (undef, $event) = @_;
-        return $reviewed_commits{$event->{patchSet}{revision}};
+        my $rev = $event->{patchSet}{revision};
+        if (!$rev) {
+          die "bad event: ".Dumper($event);
+        }
+        if ($reviewed_commits{$rev}) {
+          diag "revision $rev is already reviewed\n";
+          return 1;
+        }
+        return 0;
       }
     ),
   ];
@@ -81,6 +96,7 @@ my $test_rev2 = 'bbb5609f8b97fd8c9c29d7576d46b8eba99c11ac';
 my $test_rev3 = 'ccc5609f8b97fd8c9c29d7576d46b8eba99c11ac';
 my $test_rev4 = 'ddd5609f8b97fd8c9c29d7576d46b8eba99c11ac';
 my $test_rev5 = 'eee5609f8b97fd8c9c29d7576d46b8eba99c11ac';
+my $test_rev6 = 'fff5609f8b97fd8c9c29d7576d46b8eba99c11ac';
 
 my $test_ps1 =
   { number => 1, revision => $test_rev1, ref => 'refs/changes/02/2/1' };
@@ -92,6 +108,9 @@ my $test_ps4 =
   { number => 4, revision => $test_rev4, ref => 'refs/changes/07/7/4' };
 my $test_ps5 =
   { number => 5, revision => $test_rev5, ref => 'refs/changes/07/7/5' };
+my $test_ps6 =
+  { number => 6, revision => $test_rev6, ref => 'refs/changes/07/7/6' };
+
 
 my $test_change1 = {
   project         => "prj1",
@@ -129,23 +148,33 @@ my $test_change5 = {
   currentPatchSet => $test_ps5,
 };
 
+my $test_change_unwanted = {
+  project         => "prj3",
+  branch          => "master",
+  id              => "iduw",
+  subject         => 'An unwanted commit',
+  currentPatchSet => $test_ps6,
+  unwanted => 1,
+};
+
 my %test_change_by_id = (
   id1 => $test_change1,
   id2 => $test_change2,
   id3 => $test_change3,
   id4 => $test_change4,
   id5 => $test_change5,
+  iduw => $test_change_unwanted,
 );
 
 sub patchset_created_json {
   my ($change) = @_;
 
   # events do not include the currentPatchSet within change
-  my %copy     = %{$change};
-  my $patchset = delete $copy{currentPatchSet};
+  $change = dclone $change;
+  my $patchset = delete $change->{currentPatchSet};
   return encode_json(
     { type     => 'patchset-created',
-      change   => \%copy,
+      change   => $change,
       patchSet => $patchset
     }
   );
@@ -157,13 +186,15 @@ sub mock_query {
   my ( $query, %args ) = @_;
   my $results = shift @{ $MOCK_QUERY{$query} || [] };
   $results ||= [];
+  my @new_results;
   foreach my $r ( @{$results} ) {
-    $r = { %{$r} };
+    my $new_r = dclone $r;
     if ( !$args{current_patch_set} ) {
-      delete $r->{currentPatchSet};
+      delete $new_r->{currentPatchSet};
     }
+    push @new_results, $new_r;
   }
-  $args{on_success}->( @{$results} );
+  $args{on_success}->( @new_results );
   return;
 }
 
@@ -213,6 +244,10 @@ sub test_for_each_patchset {
       },
       { delay    => 1,
         exitcode => 255,
+        stdout   => patchset_created_json($test_change_unwanted) . "\n"
+      },
+      { delay    => 1,
+        exitcode => 255,
         stdout   => patchset_created_json($test_change4) . "\n"
       },
       { delay    => 30,
@@ -250,6 +285,7 @@ sub test_for_each_patchset {
   $guard = Gerrit::Client::for_each_patchset(
     url     => 'ssh://gerrit.example.com/',
     workdir => "$dir/work",
+    wanted => sub { return !$_[0]->{unwanted} },
     %args,
   );
 

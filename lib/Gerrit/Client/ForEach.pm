@@ -42,6 +42,12 @@ sub _handle_for_each_event {
 
   return unless $event->{type} eq 'patchset-created';
 
+  if (my $wanted = $self->{args}{wanted}) {
+    if (!$wanted->( $event->{change}, $event->{patchSet})) {
+      return;
+    }
+  }
+
   $self->_enqueue_event($event);
 
   return $self->_dequeue();

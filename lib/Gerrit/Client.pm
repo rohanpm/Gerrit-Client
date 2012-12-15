@@ -412,6 +412,18 @@ and a review score will be posted in that category. The score comes
 from the return value of the callback (or exit code in the case of
 B<on_patchset_cmd>).
 
+=item B<< wanted => $sub->( $change, $patchset ) >>
+
+The optional `wanted' subroutine may be used to limit the patch sets processed.
+
+If given, a patchset will only be processed if this callback returns a
+true value. This can be used to avoid git clones of unwanted projects.
+
+For example, patchsets for all Gerrit projects under a 'test/' namespace could
+be excluded from processing by the following:
+
+    wanted => sub { $_[0]->{project} !~ m{^test/} }
+
 =back
 
 =cut
