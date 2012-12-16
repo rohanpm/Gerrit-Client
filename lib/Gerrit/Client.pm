@@ -87,7 +87,7 @@ our @EXPORT_OK = qw(
 
 our @GIT     = ('git');
 our @SSH     = ('ssh');
-our $VERSION = 20121123;
+our $VERSION = 20121216;
 our $DEBUG   = !!$ENV{GERRIT_CLIENT_DEBUG};
 
 sub _debug_print {
