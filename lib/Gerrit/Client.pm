@@ -1058,6 +1058,12 @@ git.
 
 The default value is C<('git')>.
 
+=item B<$Gerrit::Client::DEBUG>
+
+If set to a true value, various debugging messages will be printed to
+standard error.  May be set by the GERRIT_CLIENT_DEBUG environment
+variable.
+
 =back
 
 =head1 AUTHOR
@@ -1067,6 +1073,9 @@ Rohan McGovern, <rohan@mcgovern.id.au>
 =head1 BUGS
 
 Please use L<http://rt.cpan.org/> to view or report bugs.
+
+When reporting a reproducible bug, please include the output of your
+program with the environment variable GERRIT_CLIENT_DEBUG set to 1.
 
 =head1 LICENSE AND COPYRIGHT
 
