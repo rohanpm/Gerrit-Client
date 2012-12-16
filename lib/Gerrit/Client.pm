@@ -397,6 +397,15 @@ which generates and returns an array for the command and its arguments.
 All on_patchset callbacks receive B<change> and B<patchset> hashref arguments.
 Note that a change may hold several patchsets.
 
+=item B<< on_error => $sub->($error) >>
+
+Callback invoked when an error occurs. $error is a human-readable error string.
+
+All errors are treated as recoverable. To abort on an error, explicitly undefine
+the loop guard object from within the callback.
+
+By default, a warning message is printed for each error.
+
 =item B<< review => 0 | 1 | 'code-review' | 'verified' | ... >>
 
 If false (the default), patch sets are not automatically reviewed
@@ -478,7 +487,7 @@ sub for_each_patchset {
       $args{query},
       url               => $args{url},
       current_patch_set => 1,
-      on_error          => $args{on_error},
+      on_error          => sub { shift; $args{on_error}->( @_ ) },
       on_success        => sub {
         return unless $weakself;
         my (@results) = @_;
@@ -515,8 +524,7 @@ sub for_each_patchset {
     on_error => sub {
       my (undef, $error) = @_;
 
-      warn __PACKAGE__ . '::for_each_patchset: '
-        ."connection lost: $error, attempting to recover\n";
+      $args{on_error}->( "connection lost: $error, attempting to recover\n" );
 
       # after a few seconds to allow reconnect, perform the base query again
       $do_query_soon->();

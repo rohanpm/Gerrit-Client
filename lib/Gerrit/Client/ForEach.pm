@@ -109,17 +109,15 @@ sub _mark_commit_reviewed {
   my $revision = $event->{patchSet}{revision};
   my $status;
   my $output = capture_merged {
-    $status = system(
-      @Gerrit::Client::GIT,
-      '--git-dir',             $gitdir,
-      'notes',                 '--ref',
-      'Gerrit-Client-reviews', 'append',
-      '-m', '1', $revision,
-    );
+    $status =
+      system( @Gerrit::Client::GIT, '--git-dir', $gitdir, 'notes', '--ref',
+      'Gerrit-Client-reviews', 'append', '-m', '1', $revision, );
   };
-  if ($status != 0) {
-    warn "Gerrit::Client: problem writing git note for $revision\n$output\n";
-  } else {
+  if ( $status != 0 ) {
+    $self->{args}{on_error}
+      ->( "problem writing git note for $revision\n$output\n" );
+  }
+  else {
     _debug_print "marked $revision as reviewed\n";
   }
   return;
@@ -187,7 +185,8 @@ sub _ensure_git_cloned {
   }
 
   if ( !-d $gitdir ) {
-    warn __PACKAGE__ . ": failed to clone $giturl to $gitdir\n";
+    $self->{args}{on_error}
+      ->( "failed to clone $giturl to $gitdir\n" );
     return;
   }
 
@@ -317,8 +316,9 @@ sub _ensure_cmd {
 
         my $status = $cv->recv();
         if ( $status && !$args{allownonzero} ) {
-          warn __PACKAGE__ . ": $name exited with status $status\n"
-            . ($event->{$outputkey} ? $event->{$outputkey} : q{});
+          $self->{args}{on_error}
+            ->( "$name exited with status $status\n"
+                  . ($event->{$outputkey} ? $event->{$outputkey} : q{}));
         }
         else {
           $event->{$donekey} = 1;
@@ -336,7 +336,8 @@ sub _ensure_cmd {
     return;
   }
 
-  warn __PACKAGE__ . ": dropped event due to failed command: $cmdstr\n";
+  $self->{args}{on_error}
+    ->( "dropped event due to failed command: $cmdstr\n" );
   return;
 }
 
