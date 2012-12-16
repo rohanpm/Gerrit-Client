@@ -55,7 +55,7 @@ sub test_patchset_creation {
   my $stream = Gerrit::Client::stream_events(
     url      => $giturl_base,
     on_event => sub {
-      my ( undef, $event ) = @_;
+      my ( $event ) = @_;
       if ( $event->{type} eq 'comment-added' ) {
         $review_events{ $event->{patchSet}{revision} } = $event;
       }

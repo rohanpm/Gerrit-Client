@@ -43,9 +43,8 @@ sub test_patchset_creation {
 
   {
     $gerrit->git_ok( 'push', '-v', 'origin', 'HEAD:refs/for/master' ) || return;
-    my ( $handle1, $event1 ) = $cv->recv();
+    my ( $event1 ) = $cv->recv();
     $cv = AE::cv();
-    is( $handle1,        $stream,            'on_event handle1' );
     is( $event1->{type}, 'patchset-created', 'on_event patchset-created 1' );
     is( $event1->{patchSet}{number}, 1, 'PS1' );
   }
@@ -53,9 +52,8 @@ sub test_patchset_creation {
   {
     $gerrit->git_test_commit( { amend => 1 } ) || return;
     $gerrit->git_ok( 'push', '-v', 'origin', 'HEAD:refs/for/master' ) || return;
-    my ( $handle2, $event2 ) = $cv->recv();
+    my ( $event2 ) = $cv->recv();
     $cv = AE::cv();
-    is( $handle2,        $stream,            'on_event handle2' );
     is( $event2->{type}, 'patchset-created', 'on_event patchset-created 2' );
     is( $event2->{patchSet}{number}, 2, 'PS2' );
   }
@@ -66,9 +64,8 @@ sub test_patchset_creation {
     $gerrit->git_test_commit( { amend => 1 } ) || return;
     $gerrit->git_ok( 'push', '-v', 'origin', 'HEAD:refs/for/master' ) || return;
     my $timer = AE::timer( 2, 0, sub { $cv->send('timeout') } );
-    my ( $handle3, $event3 ) = $cv->recv();
-    if ( !is( $handle3, 'timeout', 'no events after undef' ) ) {
-      diag( 'handle3:', explain($handle3) );
+    my ( $event3 ) = $cv->recv();
+    if ( !is( $event3, 'timeout', 'no events after undef' ) ) {
       diag( 'event3:',  explain($event3) );
     }
     is( kill( 0, $ssh_pid ), 0, 'ssh is no longer running' );

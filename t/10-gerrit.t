@@ -185,7 +185,7 @@ qq|{"id":1,"key1":"val1"}\n{"id":2,"key2":"val2"}\n{"id":3,"key3":"val3"}\n|,
   $guard = Gerrit::Client::stream_events(
     url      => 'ssh://gerrit.example.com/',
     on_event => sub {
-      my ( undef, $event ) = @_;
+      my ( $event ) = @_;
       push @events, $event;
 
       # we've arranged for 3 events, but test aborting after the 2nd event

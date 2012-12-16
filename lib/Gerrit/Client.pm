@@ -34,7 +34,7 @@ Gerrit::Client - interact with Gerrit code review tool
   my $stream = stream_events(
     url => 'ssh://gerrit.example.com:29418',
     on_event => sub {
-      my (undef, $event) = @_;
+      my ($event) = @_;
       if ($event->{type} eq 'patchset-added'
           && $event->{change}{project} eq 'myproject') {
         system("xmessage", "New patch set arrived!");
@@ -158,7 +158,7 @@ stream-events handle as their first argument.
 
 =over
 
-=item B<< on_event => $cb->($handle, $data) >>
+=item B<< on_event => $cb->($data) >>
 
 Called when an event has been received.
 $data is a reference to a hash representing the event.
@@ -167,7 +167,7 @@ See L<the Gerrit
 documentation|http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-stream-events.html>
 for information on the possible events.
 
-=item B<< on_error => $cb->($handle, $error) >>
+=item B<< on_error => $cb->($error) >>
 
 Called when an error occurs in the connection.
 $error is a human-readable string.
@@ -194,7 +194,7 @@ sub stream_events {
   my $url      = $args{url}      || croak 'missing url argument';
   my $on_event = $args{on_event} || croak 'missing on_event argument';
   my $on_error = $args{on_error} || sub {
-    my ( undef, $error ) = @_;
+    my ( $error ) = @_;
     warn __PACKAGE__ . ": $error\n";
     return 1;
   };
@@ -227,7 +227,7 @@ sub stream_events {
   my $handle_error = sub {
     my ( $handle, $error ) = @_;
     my $retry;
-    eval { $retry = $on_error->( $out_weak, $error ); };
+    eval { $retry = $on_error->( $error ); };
     if ($retry) {
 
       # retry after $sleep seconds only
@@ -287,7 +287,7 @@ sub stream_events {
         # every successful read resets sleep period
         $sleep = $INIT_SLEEP;
 
-        $on_event->( $out_weak, $data );
+        $on_event->( $data );
         $h->push_read(%read_req);
       }
     );
@@ -487,7 +487,7 @@ sub for_each_patchset {
       $args{query},
       url               => $args{url},
       current_patch_set => 1,
-      on_error          => sub { shift; $args{on_error}->( @_ ) },
+      on_error          => sub { $args{on_error}->( @_ ) },
       on_success        => sub {
         return unless $weakself;
         my (@results) = @_;
@@ -519,10 +519,10 @@ sub for_each_patchset {
   $self->{stream} = Gerrit::Client::stream_events(
     url      => $args{url},
     on_event => sub {
-      $weakself->_handle_for_each_event( $_[1] );
+      $weakself->_handle_for_each_event( @_ );
     },
     on_error => sub {
-      my (undef, $error) = @_;
+      my ($error) = @_;
 
       $args{on_error}->( "connection lost: $error, attempting to recover\n" );
 
@@ -749,9 +749,9 @@ All other arguments are optional, and include:
 
 =over
 
-=item B<< on_success => $cb->( $commit_or_change ) >>
+=item B<< on_success => $cb->() >>
 
-=item B<< on_error => $cb->( $commit_or_change, $error ) >>
+=item B<< on_error => $cb->( $error ) >>
 
 Callbacks invoked when the operation succeeds or fails.
 
@@ -795,8 +795,7 @@ sub review {
       on_error   => {
         type    => CODEREF,
         default => sub {
-          my ( $c, @rest ) = @_;
-          warn __PACKAGE__ . "::review: error (for $c): ", @rest;
+          warn __PACKAGE__ . "::review: error: ", @_;
           }
       },
       %GERRIT_REVIEW_OPTIONS,
@@ -844,10 +843,10 @@ sub review {
       my $status = shift->recv();
       if ( $status && $options{on_error} ) {
         $options{on_error}
-          ->( $commit_or_change, "$cmdstr exited with status $status" );
+          ->( "$cmdstr exited with status $status" );
       }
       if ( !$status && $options{on_success} ) {
-        $options{on_success}->($commit_or_change);
+        $options{on_success}->();
       }
 
       # make sure we stay alive until this callback is executed
@@ -900,7 +899,7 @@ parsed from the JSON output of `gerrit query'. The format of Gerrit
 change objects is described in L<the Gerrit documentation|
 https://gerrit.googlecode.com/svn/documentation/2.2.1/json.html>.
 
-=item B<< on_error => $cb->( $query, $error ) >>
+=item B<< on_error => $cb->( $error ) >>
 
 Callback invoked when the query command fails.
 $error is a human-readable string describing the error.
@@ -941,8 +940,7 @@ sub query
       on_error   => {
         type    => CODEREF,
         default => sub {
-          my ( $c, @rest ) = @_;
-          warn __PACKAGE__ . "::query: error (for $c): ", @rest;
+          warn __PACKAGE__ . "::query: error: ", @_;
           }
       },
       %GERRIT_QUERY_OPTIONS,
@@ -983,7 +981,7 @@ sub query
       my $status = shift->recv();
       if ( $status && $options{on_error} ) {
         $options{on_error}
-          ->( $query, "$cmdstr exited with status $status" );
+          ->( "$cmdstr exited with status $status" );
         return;
       }
 
@@ -993,7 +991,7 @@ sub query
       foreach my $line (split /\n/, $output) {
         my $data = eval { decode_json($line) };
         if ($EVAL_ERROR) {
-          $options{on_error}->( $query, "error parsing result `$line': $EVAL_ERROR" );
+          $options{on_error}->( "error parsing result `$line': $EVAL_ERROR" );
           return;
         }
         next if ($data->{type} && $data->{type} eq 'stats');
