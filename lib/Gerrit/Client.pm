@@ -424,6 +424,21 @@ be excluded from processing by the following:
 
     wanted => sub { $_[0]->{project} !~ m{^test/} }
 
+=item B<< query => $query | 0 >>
+
+The Gerrit query used to find the initial set of patches to be
+processed.  The query is executed when the loop begins and whenever
+the connection to Gerrit is interrupted, to avoid missed patchsets.
+
+Defaults to "status:open", meaning every open patch will be processed.
+
+Note that the query is not applied to incoming patchsets observed via
+stream-events. The B<wanted> parameter may be used for that case.
+
+If a false value is passed, querying is disabled altogether. This
+means only patchsets arriving while the loop is running will be
+processed.
+
 =back
 
 =cut
@@ -439,6 +454,10 @@ sub for_each_patchset {
   $args{workdir} || croak 'missing workdir argument';
   $args{on_error} ||= sub { warn __PACKAGE__, ': ', @_ };
 
+  if (!exists($args{query})) {
+    $args{query} = 'status:open';
+  }
+
   if ( !-d $args{workdir} ) {
     mkpath( $args{workdir} );
   }
@@ -453,8 +472,10 @@ sub for_each_patchset {
   # stream_events takes care of incoming changes, perform a query to find
   # existing changes
   my $do_query = sub {
+    return unless $args{query};
+
     query(
-      'status:open',
+      $args{query},
       url               => $args{url},
       current_patch_set => 1,
       on_error          => $args{on_error},
@@ -852,7 +873,7 @@ and invoke a callback with the results.
 $query is the Gerrit query string, whose format is described in L<the
 Gerrit
 documentation|https://gerrit.googlecode.com/svn/documentation/2.2.1/user-search.html>.
-"status:open age:1week" is an example of a simple Gerrit query.
+"status:open age:1w" is an example of a simple Gerrit query.
 
 $url is the URL with ssh schema of the Gerrit site to be queried
 (e.g. "ssh://user@gerrit.example.com:29418/").

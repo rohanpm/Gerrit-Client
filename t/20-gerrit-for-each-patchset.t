@@ -111,7 +111,6 @@ my $test_ps5 =
 my $test_ps6 =
   { number => 6, revision => $test_rev6, ref => 'refs/changes/07/7/6' };
 
-
 my $test_change1 = {
   project         => "prj1",
   branch          => "master",
@@ -225,8 +224,8 @@ sub test_for_each_patchset {
   ok( $dir, "$testname tempdir created" );
   Env::Path->PATH->Prepend("$dir");
 
-  # start off with these open patch sets...
-  local $MOCK_QUERY{'status:open'} = [ ([ $test_change1, $test_change2 ]) x 3 ];
+  # test an explicitly set query
+  local $MOCK_QUERY{'quux'} = [ ([ $test_change1, $test_change2 ]) x 3 ];
   my $mock_query =
     Sub::Override->new( 'Gerrit::Client::query' => \&mock_query );
   my $mock_git = mock_gits_ok();
@@ -286,6 +285,7 @@ sub test_for_each_patchset {
     url     => 'ssh://gerrit.example.com/',
     workdir => "$dir/work",
     wanted => sub { return !$_[0]->{unwanted} },
+    query => 'quux',
     %args,
   );
 
