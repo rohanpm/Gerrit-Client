@@ -359,7 +359,7 @@ been processed.
 
 =item B<< on_patchset_fork => $sub->($change, $patchset) >>
 
-=item B<< on_patchset_cmd> => $sub->($change, $patchset) | $cmd_ref >>
+=item B<< on_patchset_cmd => $sub->($change, $patchset) | $cmd_ref >>
 
 Callbacks invoked for each patchset. Only one of the above callback
 forms may be used.
