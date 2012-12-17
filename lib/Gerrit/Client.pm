@@ -85,10 +85,11 @@ our @EXPORT_OK = qw(
   quote
 );
 
-our @GIT     = ('git');
-our @SSH     = ('ssh');
-our $VERSION = 20121216;
-our $DEBUG   = !!$ENV{GERRIT_CLIENT_DEBUG};
+our @GIT             = ('git');
+our @SSH             = ('ssh');
+our $VERSION         = 20121216;
+our $DEBUG           = !!$ENV{GERRIT_CLIENT_DEBUG};
+our $MAX_CONNECTIONS = 2;
 
 sub _debug_print {
   return unless $DEBUG;
@@ -110,6 +111,7 @@ sub _gerrit_parse_url {
   }
 
   my $project = $url->path();
+  $url->path(undef);
 
   # remove useless leading/trailing components
   $project =~ s{\A/+}{};
@@ -126,12 +128,12 @@ sub _gerrit_parse_url {
       'gerrit',
     ],
     project => $project,
+    gerrit => $url->as_string(),
   };
 }
 
 # Like qx, but takes a list, so no quoting issues
-sub _safeqx
-{
+sub _safeqx {
   my (@cmd) = @_;
   my $status;
   my $output = capture { $status = system(@cmd) };
@@ -194,7 +196,7 @@ sub stream_events {
   my $url      = $args{url}      || croak 'missing url argument';
   my $on_event = $args{on_event} || croak 'missing on_event argument';
   my $on_error = $args{on_error} || sub {
-    my ( $error ) = @_;
+    my ($error) = @_;
     warn __PACKAGE__ . ": $error\n";
     return 1;
   };
@@ -227,7 +229,7 @@ sub stream_events {
   my $handle_error = sub {
     my ( $handle, $error ) = @_;
     my $retry;
-    eval { $retry = $on_error->( $error ); };
+    eval { $retry = $on_error->($error); };
     if ($retry) {
 
       # retry after $sleep seconds only
@@ -287,7 +289,7 @@ sub stream_events {
         # every successful read resets sleep period
         $sleep = $INIT_SLEEP;
 
-        $on_event->( $data );
+        $on_event->($data);
         $h->push_read(%read_req);
       }
     );
@@ -463,7 +465,7 @@ sub for_each_patchset {
   $args{workdir} || croak 'missing workdir argument';
   $args{on_error} ||= sub { warn __PACKAGE__, ': ', @_ };
 
-  if (!exists($args{query})) {
+  if ( !exists( $args{query} ) ) {
     $args{query} = 'status:open';
   }
 
@@ -487,7 +489,7 @@ sub for_each_patchset {
       $args{query},
       url               => $args{url},
       current_patch_set => 1,
-      on_error          => sub { $args{on_error}->( @_ ) },
+      on_error          => sub { $args{on_error}->(@_) },
       on_success        => sub {
         return unless $weakself;
         my (@results) = @_;
@@ -519,12 +521,12 @@ sub for_each_patchset {
   $self->{stream} = Gerrit::Client::stream_events(
     url      => $args{url},
     on_event => sub {
-      $weakself->_handle_for_each_event( @_ );
+      $weakself->_handle_for_each_event(@_);
     },
     on_error => sub {
       my ($error) = @_;
 
-      $args{on_error}->( "connection lost: $error, attempting to recover\n" );
+      $args{on_error}->("connection lost: $error, attempting to recover\n");
 
       # after a few seconds to allow reconnect, perform the base query again
       $do_query_soon->();
@@ -591,7 +593,8 @@ sub next_change_id {
 
   # First preference: change id is the last SHA used by this bot.
   my $author    = "$ENV{GIT_AUTHOR_NAME} <$ENV{GIT_AUTHOR_EMAIL}>";
-  my $change_id = _safeqx(@GIT, qw(rev-list -n1 --fixed-strings), "--author=$author", 'HEAD');
+  my $change_id = _safeqx( @GIT, qw(rev-list -n1 --fixed-strings),
+    "--author=$author", 'HEAD' );
   if ( my $error = $? ) {
     carp __PACKAGE__ . qq{: no previous commits from "$author" were found};
   }
@@ -602,9 +605,13 @@ sub next_change_id {
   # Second preference: for a stable but random change-id, use hash of the
   # bot name
   if ( !$change_id ) {
-    my $tempfile = File::Temp->new( 'perl-Gerrit-Client-hash.XXXXXX', TMPDIR => 1, CLEANUP => 1 );
-    $tempfile->printflush( $author );
-    $change_id = _safeqx(@GIT, 'hash-object', "$tempfile");
+    my $tempfile = File::Temp->new(
+      'perl-Gerrit-Client-hash.XXXXXX',
+      TMPDIR  => 1,
+      CLEANUP => 1
+    );
+    $tempfile->printflush($author);
+    $change_id = _safeqx( @GIT, 'hash-object', "$tempfile" );
     if ( my $error = $? ) {
       carp __PACKAGE__ . qq{: git hash-object failed};
     }
@@ -617,7 +624,7 @@ sub next_change_id {
   # This can happen if an author other than ourself has already used the
   # change id.
   if ($change_id) {
-    my $found = _safeqx(@GIT, 'log', '-n1000', "--grep=I$change_id", 'HEAD');
+    my $found = _safeqx( @GIT, 'log', '-n1000', "--grep=I$change_id", 'HEAD' );
     if ( !$? && $found ) {
       carp __PACKAGE__ . qq{: desired Change-Id $change_id is already used};
       undef $change_id;
@@ -808,7 +815,7 @@ sub review {
   # project can be filled in by explicit 'project' argument, or from
   # URL, or left blank
   $options{project} ||= $parsed_url->{project};
-  if (!$options{project}) {
+  if ( !$options{project} ) {
     delete $options{project};
   }
 
@@ -842,8 +849,7 @@ sub review {
     sub {
       my $status = shift->recv();
       if ( $status && $options{on_error} ) {
-        $options{on_error}
-          ->( "$cmdstr exited with status $status" );
+        $options{on_error}->("$cmdstr exited with status $status");
       }
       if ( !$status && $options{on_success} ) {
         $options{on_success}->();
@@ -860,16 +866,18 @@ sub review {
 # options to Gerrit::Client::query which map directly to options to
 # "ssh <somegerrit> gerrit query ..."
 my %GERRIT_QUERY_OPTIONS = (
-  ( map { $_ => { type => BOOLEAN, default => 0 } } qw(
-    all_approvals
-    comments
-    commit_message
-    current_patch_set
-    dependencies
-    files
-    patch_sets
-    submit_records
-  ))
+  ( map { $_ => { type => BOOLEAN, default => 0 } }
+      qw(
+      all_approvals
+      comments
+      commit_message
+      current_patch_set
+      dependencies
+      files
+      patch_sets
+      submit_records
+      )
+  )
 );
 
 =item B<< query $query, url => $gerrit_url, ... >>
@@ -930,8 +938,7 @@ documentation|http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-query.htm
 
 =cut
 
-sub query
-{
+sub query {
   my $query = shift;
   my (%options) = validate(
     @_,
@@ -962,7 +969,7 @@ sub query
     push @cmd, $cmd_key;
   }
 
-  push @cmd, quote( $query );
+  push @cmd, quote($query);
 
   my $output;
   my $cv = AnyEvent::Util::run_cmd( \@cmd, '>' => \$output );
@@ -980,21 +987,20 @@ sub query
 
       my $status = shift->recv();
       if ( $status && $options{on_error} ) {
-        $options{on_error}
-          ->( "$cmdstr exited with status $status" );
+        $options{on_error}->("$cmdstr exited with status $status");
         return;
       }
 
       return unless $options{on_success};
 
       my @results;
-      foreach my $line (split /\n/, $output) {
+      foreach my $line ( split /\n/, $output ) {
         my $data = eval { decode_json($line) };
         if ($EVAL_ERROR) {
-          $options{on_error}->( "error parsing result `$line': $EVAL_ERROR" );
+          $options{on_error}->("error parsing result `$line': $EVAL_ERROR");
           return;
         }
-        next if ($data->{type} && $data->{type} eq 'stats');
+        next if ( $data->{type} && $data->{type} eq 'stats' );
         push @results, $data;
       }
 
@@ -1057,6 +1063,15 @@ git.
   my $guard = Gerrit::Client::for_each_patchset ...
 
 The default value is C<('git')>.
+
+=item B<$Gerrit::Client::MAX_CONNECTIONS>
+
+Maximum number of simultaneous git connections Gerrit::Client may make
+to a single Gerrit server. The amount of parallel git clones and
+fetches should be throttled, otherwise the Gerrit server may drop
+incoming connections.
+
+The default value is C<2>.
 
 =item B<$Gerrit::Client::DEBUG>
 

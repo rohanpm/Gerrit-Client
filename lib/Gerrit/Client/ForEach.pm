@@ -33,6 +33,15 @@ use File::chdir;
 use Gerrit::Client;
 use Scalar::Util qw(weaken);
 
+# counter of how many connections we have per server
+my %CONNECTION_COUNTER;
+
+sub _giturl_counter {
+  my ($giturl) = @_;
+  my $gerriturl = Gerrit::Client::_gerrit_parse_url($giturl)->{gerrit};
+  return \$CONNECTION_COUNTER{$gerriturl};
+}
+
 sub _debug_print {
   return Gerrit::Client::_debug_print(@_);
 }
@@ -172,6 +181,7 @@ sub _ensure_git_cloned {
     name  => 'git clone',
     cmd => [ $self->_git_bare_clone_cmd( $giturl, $gitdir ) ],
     onlyif => sub { !-d $gitdir },
+    counter => _giturl_counter($giturl),
   );
   return unless $cloned;
 
@@ -204,6 +214,7 @@ sub _ensure_git_fetched {
     event => $event,
     queue => $out,
     name  => 'git fetch',
+    counter => _giturl_counter($giturl),
     cmd =>
       [ $self->_git_fetch_cmd( $giturl, $gitdir, $ref ) ],
   );
@@ -254,7 +265,7 @@ sub _ensure_cmd {
   my $name  = $args{name};
 
   # capture output by default so that we can include it in error messages
-  if (!exists($args{saveoutput})) {
+  if ( !exists( $args{saveoutput} ) ) {
     $args{saveoutput} = 1;
   }
 
@@ -287,6 +298,21 @@ sub _ensure_cmd {
       return 1;
     }
 
+    # Don't run the command if it counts as a connection and we'd have
+    # too many
+    my $counter = $args{counter};
+    my $uncounter;
+    if ($counter) {
+      if ( ($$counter||0) >= $Gerrit::Client::MAX_CONNECTIONS ) {
+        _debug_print(
+          "$cmdstr: delaying execution, would surpass connection limit\n");
+        push @{$queue}, $event;
+        return;
+      }
+      $$counter++;
+      $uncounter = guard { $$counter-- };
+    }
+
     my $printoutput = sub { _debug_print( "$cmdstr: ", @_ ) };
     my $handleoutput = $printoutput;
 
@@ -312,13 +338,13 @@ sub _ensure_cmd {
     $cmdcv->cb(
       sub {
         my ($cv) = @_;
+        undef $uncounter;
         return unless $weakself;
 
         my $status = $cv->recv();
         if ( $status && !$args{allownonzero} ) {
-          $self->{args}{on_error}
-            ->( "$name exited with status $status\n"
-                  . ($event->{$outputkey} ? $event->{$outputkey} : q{}));
+          $self->{args}{on_error}->( "$name exited with status $status\n"
+              . ( $event->{$outputkey} ? $event->{$outputkey} : q{} ) );
         }
         else {
           $event->{$donekey} = 1;
@@ -336,8 +362,7 @@ sub _ensure_cmd {
     return;
   }
 
-  $self->{args}{on_error}
-    ->( "dropped event due to failed command: $cmdstr\n" );
+  $self->{args}{on_error}->("dropped event due to failed command: $cmdstr\n");
   return;
 }
 
