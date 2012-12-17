@@ -473,6 +473,11 @@ sub for_each_patchset {
     mkpath( $args{workdir} );
   }
 
+  # drop the path section of the URL to get base gerrit URL
+  my $url = URI->new($args{url});
+  $url->path( undef );
+  $args{url} = $url->as_string();
+
   require "Gerrit/Client/ForEach.pm";
   my $self = bless {}, 'Gerrit::Client::ForEach';
   $self->{args} = \%args;
