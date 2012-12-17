@@ -517,27 +517,35 @@ sub _do_callback {
   return unless $result;
 
   if ($Gerrit::Client::DEBUG) {
-    _debug_print 'callback result: '.Dumper($result);
+    _debug_print 'callback result: ' . Dumper($result);
   }
 
   # Ensure we shan't review it again
-  $self->_mark_commit_reviewed( $event );
+  $self->_mark_commit_reviewed($event);
 
   my $review = $self->{args}{review};
   return unless $review;
 
-  if ($review =~ m{\A\d+\z}) {
+  if ( $review =~ m{\A\d+\z} ) {
     $review = 'code_review';
   }
 
-  if (!$result->{output} && !$result->{score}) {
+  if ( my $cb = $self->{args}{on_review} ) {
+    return
+      unless $cb->(
+      $event->{change},  $event->{patchSet},
+      $result->{output}, $result->{score}
+      );
+  }
+
+  if ( !$result->{output} && !$result->{score} ) {
     # no review to be done
     return;
   }
 
   Gerrit::Client::review(
     $event->{patchSet}{revision},
-    url => $self->{args}{url},
+    url     => $self->{args}{url},
     message => $result->{output},
     $review => $result->{score},
   );

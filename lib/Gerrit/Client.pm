@@ -423,6 +423,19 @@ and a review score will be posted in that category. The score comes
 from the return value of the callback (or exit code in the case of
 B<on_patchset_cmd>).
 
+=item B<< on_review => $sub->( $change, $patchset, $message, $score ) >>
+
+Optional callback invoked prior to performing a review (when the `review'
+option is set to a true value).
+
+The callback should return a true value if the review should be
+posted, false otherwise. This may be useful for the implementation of
+a dry-run mode.
+
+The callback may be invoked with an undefined $message and $score, which
+indicates that a patchset was successfully processed but no message
+or score was produced.
+
 =item B<< wanted => $sub->( $change, $patchset ) >>
 
 The optional `wanted' subroutine may be used to limit the patch sets processed.
