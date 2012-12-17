@@ -36,6 +36,9 @@ use Scalar::Util qw(weaken);
 # counter of how many connections we have per server
 my %CONNECTION_COUNTER;
 
+# 1 when fetching into a gitdir
+my %GITDIR_FETCHING;
+
 sub _giturl_counter {
   my ($giturl) = @_;
   my $gerriturl = Gerrit::Client::_gerrit_parse_url($giturl)->{gerrit};
@@ -215,6 +218,7 @@ sub _ensure_git_fetched {
     queue => $out,
     name  => 'git fetch',
     counter => _giturl_counter($giturl),
+    'lock' => \$GITDIR_FETCHING{$gitdir},
     cmd =>
       [ $self->_git_fetch_cmd( $giturl, $gitdir, $ref ) ],
   );
@@ -313,6 +317,19 @@ sub _ensure_cmd {
       $uncounter = guard { $$counter-- };
     }
 
+    my $lock = $args{lock};
+    my $unlock;
+    if ($lock) {
+      if ($$lock) {
+        _debug_print(
+          "$cmdstr: delaying execution, lock held elsewhere\n");
+        push @{$queue}, $event;
+        return;
+      }
+      $$lock++;
+      $unlock = guard { $$lock-- };
+    }
+
     my $printoutput = sub { _debug_print( "$cmdstr: ", @_ ) };
     my $handleoutput = $printoutput;
 
@@ -339,6 +356,7 @@ sub _ensure_cmd {
       sub {
         my ($cv) = @_;
         undef $uncounter;
+        undef $unlock;
         return unless $weakself;
 
         my $status = $cv->recv();
