@@ -36,6 +36,9 @@ use Scalar::Util qw(weaken);
 # counter of how many connections we have per server
 my %CONNECTION_COUNTER;
 
+# counter of how many worker processes we have
+my $WORKER_COUNTER;
+
 # 1 when fetching into a gitdir
 my %GITDIR_FETCHING;
 
@@ -200,7 +203,7 @@ sub _ensure_git_cloned {
     name  => 'git clone',
     cmd => [ $self->_git_bare_clone_cmd( $giturl, $gitdir ) ],
     onlyif => sub { !-d $gitdir },
-    counter => _giturl_counter($giturl),
+    counter => [ _giturl_counter($giturl), $Gerrit::Client::MAX_CONNECTIONS ],
   );
   return unless $cloned;
 
@@ -242,7 +245,7 @@ sub _ensure_git_fetched {
     event => $event,
     queue => $out,
     name  => 'git fetch',
-    counter => _giturl_counter($giturl),
+    counter => [ _giturl_counter($giturl), $Gerrit::Client::MAX_CONNECTIONS ],
     'lock' => \$GITDIR_FETCHING{$gitdir},
     onlyif => sub { !_have_ref( $gitdir, $ref ) },
     cmd =>
@@ -258,6 +261,13 @@ sub _ensure_git_workdir_uptodate {
   my $gitdir  = $self->_gitdir($event);
 
   alias my $workdir = $event->{_workdir};
+
+  # avoid creating temporary directory etc if we can't run processes yet
+  if (!$workdir && ($WORKER_COUNTER||0) >= $Gerrit::Client::MAX_FORKS) {
+    push @{$out}, $event;
+    return;
+  }
+
   $workdir ||=
     File::Temp->newdir("$self->{args}{workdir}/$project/work.XXXXXX");
 
@@ -272,6 +282,7 @@ sub _ensure_git_workdir_uptodate {
                ? $self->_git_bare_clone_cmd( $gitdir, $workdir )
                : $self->_git_clone_cmd( $gitdir, $workdir ) ],
     onlyif => sub { !-d( $bare ? "$workdir/objects" : "$workdir/.git") },
+    counter => [ \$WORKER_COUNTER, $Gerrit::Client::MAX_FORKS ],
     );
 
   return
@@ -281,6 +292,7 @@ sub _ensure_git_workdir_uptodate {
     name  => 'git fetch for workdir',
     cmd => [ $self->_git_fetch_cmd( 'origin', $bare ? $workdir : "$workdir/.git", $ref ) ],
     wd    => $workdir,
+    counter => [ \$WORKER_COUNTER, $Gerrit::Client::MAX_FORKS ],
   );
 
   return $self->_ensure_cmd(
@@ -289,6 +301,7 @@ sub _ensure_git_workdir_uptodate {
     name  => 'git reset for workdir',
     cmd => [ $self->_git_reset_cmd( $ref, $bare ? '--soft' : '--hard' ) ],
     wd    => $workdir,
+    counter => [ \$WORKER_COUNTER, $Gerrit::Client::MAX_FORKS ],
   );
 }
 
@@ -334,12 +347,12 @@ sub _ensure_cmd {
 
     # Don't run the command if it counts as a connection and we'd have
     # too many
-    my $counter = $args{counter};
+    my ($counter, $count_max) = @{ $args{counter} || [] };
     my $uncounter;
     if ($counter) {
-      if ( ($$counter||0) >= $Gerrit::Client::MAX_CONNECTIONS ) {
+      if ( ($$counter||0) >= $count_max ) {
         _debug_print(
-          "$cmdstr: delaying execution, would surpass connection limit\n");
+          "$cmdstr: delaying execution, would surpass limit\n");
         push @{$queue}, $event;
         return;
       }
@@ -501,6 +514,7 @@ sub _do_cb_cmd {
     wd    => $event->{_workdir},
     saveoutput => $self->{args}{review},
     allownonzero => 1,
+    counter => [ \$WORKER_COUNTER, $Gerrit::Client::MAX_FORKS ],
   );
 
   my $score = 0;

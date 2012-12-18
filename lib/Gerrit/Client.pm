@@ -90,6 +90,7 @@ our @SSH             = ('ssh');
 our $VERSION         = 20121216;
 our $DEBUG           = !!$ENV{GERRIT_CLIENT_DEBUG};
 our $MAX_CONNECTIONS = 2;
+our $MAX_FORKS       = 4;
 
 sub _debug_print {
   return unless $DEBUG;
@@ -1108,6 +1109,18 @@ fetches should be throttled, otherwise the Gerrit server may drop
 incoming connections.
 
 The default value is C<2>.
+
+=item B<$Gerrit::Client::MAX_FORKS>
+
+Maximum number of processes allowed to run simultaneously for handling
+of patchsets in for_each_patchset. This limit applies only to local
+work processes, not git clones or fetches from gerrit.
+
+Note that C<$AnyEvent::Util::MAX_FORKS> may also impact the maximum number
+of processes. C<$AnyEvent::Util::MAX_FORKS> should be set higher than or
+equal to C<$Gerrit::Client::MAX_FORKS>.
+
+The default value is C<4>.
 
 =item B<$Gerrit::Client::DEBUG>
 
