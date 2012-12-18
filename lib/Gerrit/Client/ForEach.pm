@@ -81,14 +81,29 @@ sub _git_clone_cmd
 
 sub _git_fetch_cmd
 {
-  my (undef, $giturl, $gitdir, $ref) = @_;
-  return (@Gerrit::Client::GIT, '--git-dir', $gitdir, 'fetch', '-v', $giturl, "+$ref:$ref");
+  my (undef, $giturl, $gitdir, @refs) = @_;
+  return (@Gerrit::Client::GIT, '--git-dir', $gitdir, 'fetch', '-v', $giturl,
+          (map { "+$_:$_" } @refs));
 }
 
 sub _git_reset_cmd
 {
   my (undef, $ref) = @_;
   return (@Gerrit::Client::GIT, 'reset', '--hard', $ref);
+}
+
+# Returns 1 iff $gitdir contains the given $ref
+sub _have_ref {
+  my ($gitdir, $ref) = @_;
+  my $status;
+  capture_merged {
+    $status = system(
+      @Gerrit::Client::GIT,
+      '--git-dir',             $gitdir,
+      'rev-parse', $ref
+    );
+  };
+  return ($status == 0);
 }
 
 # Returns 1 iff it appears the revision for $event has already been handled
@@ -207,11 +222,22 @@ sub _ensure_git_cloned {
 }
 
 sub _ensure_git_fetched {
-  my ( $self, $event, $out ) = @_;
+  my ( $self, $event, $out, $in ) = @_;
 
   my $gitdir = $self->_gitdir($event);
   my $giturl = $self->_giturl($event);
   my $ref    = $event->{patchSet}{ref};
+
+  if ($event->{_have_ref} || _have_ref($gitdir, $ref)) {
+    $event->{_have_ref} ||= 1;
+    return 1;
+  }
+
+  # If we're running a 'git fetch', we should try to find
+  # _all_ needed refs for the given giturl and fetch them at once
+  my @refs = map {
+    ($self->_giturl($_) eq $giturl) ? ($_->{patchSet}{ref}) : ()
+  } @{$in};
 
   return $self->_ensure_cmd(
     event => $event,
@@ -219,8 +245,9 @@ sub _ensure_git_fetched {
     name  => 'git fetch',
     counter => _giturl_counter($giturl),
     'lock' => \$GITDIR_FETCHING{$gitdir},
+    onlyif => sub { !_have_ref( $gitdir, $ref ) },
     cmd =>
-      [ $self->_git_fetch_cmd( $giturl, $gitdir, $ref ) ],
+      [ $self->_git_fetch_cmd( $giturl, $gitdir, $ref, @refs ) ],
   );
 }
 
@@ -561,10 +588,11 @@ sub _dequeue {
   my $weakself = $self;
   weaken($weakself);
 
+  my @queue = @{ $self->{queue} || [] };
   my @newqueue;
-  foreach my $event ( @{ $self->{queue} || [] } ) {
+  foreach my $event ( @queue ) {
     next unless $self->_ensure_git_cloned( $event, \@newqueue );
-    next unless $self->_ensure_git_fetched( $event, \@newqueue );
+    next unless $self->_ensure_git_fetched( $event, \@newqueue, \@queue );
     next unless $self->_ensure_git_workdir_uptodate( $event, \@newqueue );
     $self->_do_callback( $event, \@newqueue );
   }
