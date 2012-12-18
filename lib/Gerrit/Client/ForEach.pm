@@ -606,7 +606,7 @@ sub _dequeue {
 
   my @queue = @{ $self->{queue} || [] };
   my @newqueue;
-  foreach my $event ( @queue ) {
+  while (my $event = shift @queue) {
     next unless $self->_ensure_git_cloned( $event, \@newqueue );
     next unless $self->_ensure_git_fetched( $event, \@newqueue, \@queue );
     next unless $self->_ensure_git_workdir_uptodate( $event, \@newqueue );
