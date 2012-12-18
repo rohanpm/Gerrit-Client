@@ -1,5 +1,16 @@
 Revision history for Gerrit-Client
 
+20121218    2012-12-18
+
+    - for_each_patchset new options: on_review, git_work_tree new
+    - variables: $Gerrit::Client::MAX_CONNECTIONS,
+      $Gerrit::Client::MAX_FORKS
+
+20121216    2012-12-16
+
+    - Introduced new function, for_each_patchset, high-level event loop for
+      processing of incoming patchsets
+
 20121123    2012-11-23
 
     - Documentation fixes
