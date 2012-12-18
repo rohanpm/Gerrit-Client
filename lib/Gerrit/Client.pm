@@ -448,6 +448,20 @@ be excluded from processing by the following:
 
     wanted => sub { $_[0]->{project} !~ m{^test/} }
 
+=item B<< git_work_tree => 0 | 1 >>
+
+By default, while processing a patchset, a git work tree is set up
+with content set to the appropriate revision.
+
+C<git_work_tree => 0> may be passed to disable the work tree, saving some
+time and disk space. In this case, a bare clone is used, with HEAD
+referring to the revision to be processed.
+
+This may be useful when the patch set processing does not require a
+work tree (e.g. the incoming patch is directly scanned).
+
+Defaults to 1.
+
 =item B<< query => $query | 0 >>
 
 The Gerrit query used to find the initial set of patches to be
@@ -477,6 +491,10 @@ sub for_each_patchset {
     || croak 'missing on_patchset{_cmd,_fork} argument';
   $args{workdir} || croak 'missing workdir argument';
   $args{on_error} ||= sub { warn __PACKAGE__, ': ', @_ };
+
+  if ( !exists( $args{git_work_tree} ) ) {
+    $args{git_work_tree} = 1;
+  }
 
   if ( !exists( $args{query} ) ) {
     $args{query} = 'status:open';

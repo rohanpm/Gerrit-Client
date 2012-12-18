@@ -88,8 +88,9 @@ sub _git_fetch_cmd
 
 sub _git_reset_cmd
 {
-  my (undef, $ref) = @_;
-  return (@Gerrit::Client::GIT, 'reset', '--hard', $ref);
+  my (undef, $ref, $mode) = @_;
+  $mode ||= '--hard';
+  return (@Gerrit::Client::GIT, 'reset', $mode, $ref);
 }
 
 # Returns 1 iff $gitdir contains the given $ref
@@ -262,13 +263,17 @@ sub _ensure_git_workdir_uptodate {
   $workdir ||=
     File::Temp->newdir("$self->{args}{workdir}/$project/work.XXXXXX");
 
+  my $bare = !$self->{args}{git_work_tree};
+
   return
     unless $self->_ensure_cmd(
     event => $event,
     queue => $out,
     name  => 'git clone for workdir',
-    cmd => [ $self->_git_clone_cmd( $gitdir, $workdir ) ],
-    onlyif => sub { !-d "$workdir/.git" },
+    cmd => [ $bare
+               ? $self->_git_bare_clone_cmd( $gitdir, $workdir )
+               : $self->_git_clone_cmd( $gitdir, $workdir ) ],
+    onlyif => sub { !-d( $bare ? "$workdir/objects" : "$workdir/.git") },
     );
 
   return
@@ -276,7 +281,7 @@ sub _ensure_git_workdir_uptodate {
     event => $event,
     queue => $out,
     name  => 'git fetch for workdir',
-    cmd => [ $self->_git_fetch_cmd( 'origin', "$workdir/.git", $ref ) ],
+    cmd => [ $self->_git_fetch_cmd( 'origin', $bare ? $workdir : "$workdir/.git", $ref ) ],
     wd    => $workdir,
   );
 
@@ -284,7 +289,7 @@ sub _ensure_git_workdir_uptodate {
     event => $event,
     queue => $out,
     name  => 'git reset for workdir',
-    cmd => [ $self->_git_reset_cmd( $ref ) ],
+    cmd => [ $self->_git_reset_cmd( $ref, $bare ? '--soft' : '--hard' ) ],
     wd    => $workdir,
   );
 }
