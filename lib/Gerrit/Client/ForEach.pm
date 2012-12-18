@@ -62,7 +62,7 @@ sub _handle_for_each_event {
 
   $self->_enqueue_event($event);
 
-  return $self->_dequeue();
+  return $self->_dequeue_soon();
 }
 
 # Git command generators; these are methods so that they can be
@@ -208,9 +208,7 @@ sub _ensure_git_cloned {
     $self->{git_cloned}{$gitdir} = 1;
 
     # make sure to wake up any other event who was waiting on the clone
-    my $weakself = $self;
-    weaken($weakself);
-    AE::postpone { $weakself && $weakself->_dequeue() };
+    $self->_dequeue_soon();
   }
 
   if ( !-d $gitdir ) {
@@ -400,7 +398,7 @@ sub _ensure_cmd {
           $event->{$donekey} = 1;
         }
         $event->{$statuskey} = $status;
-        $weakself->_dequeue();
+        $weakself->_dequeue_soon();
       }
     );
     push @{$queue}, $event;
@@ -471,7 +469,7 @@ sub _do_cb_forksub {
         }
       }
       $event->{_forksub_result} = $result;
-      $weakself->_dequeue();
+      $weakself->_dequeue_soon();
     }
   );
   push @{$queue}, $event;
@@ -581,6 +579,19 @@ sub _do_callback {
     message => $result->{output},
     $review => $result->{score},
   );
+}
+
+sub _dequeue_soon {
+  my ($self) = @_;
+  my $weakself = $self;
+  weaken($weakself);
+  $self->{_dequeue_timer} ||= AE::timer( .1, 0,
+                                         sub {
+                                           return unless $weakself;
+                                           delete $weakself->{_dequeue_timer};
+                                           $weakself->_dequeue();
+                                         }
+                                       );
 }
 
 sub _dequeue {
