@@ -1134,6 +1134,17 @@ variable.
 
 Rohan McGovern, <rohan@mcgovern.id.au>
 
+=head1 COMPATIBILITY
+
+Gerrit::Client is tested with Gerrit 2.2.2.1 and Gerrit 2.6-rc1, and
+hence could reasonably be expected to work with any gerrit version in
+that range.
+
+Please note that different Gerrit versions may represent objects in
+slightly incompatible ways (e.g. "CRVW" vs "Code-Review" strings in
+event objects). Gerrit::Client does not insulate the caller against
+these changes.
+
 =head1 BUGS
 
 Please use L<http://rt.cpan.org/> to view or report bugs.
