@@ -13,6 +13,7 @@ WriteMakefile(
   MIN_PERL_VERSION   => 5.010,
   CONFIGURE_REQUIRES => { 'ExtUtils::MakeMaker' => 0, },
   BUILD_REQUIRES     => {
+    'Archive::Zip'    => 0,
     'Dir::Self'       => 0,
     'Env::Path'       => 0,
     'File::chdir'     => 0,

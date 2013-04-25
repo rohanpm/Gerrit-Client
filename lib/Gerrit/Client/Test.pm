@@ -40,6 +40,7 @@ use strict;
 use warnings;
 
 use AnyEvent::Socket;
+use Archive::Zip qw(:ERROR_CODES);
 use Capture::Tiny qw(capture_merged capture);
 use Carp;
 use English;
@@ -239,15 +240,56 @@ END_GIT
   return 1;
 }
 
-# Perform a $query via gerrit gsql.
-# Fails test if the query fails.
-# May have some quoting issues; try to avoid the " character within $query.
-sub _do_gsql {
+# Perform a $query via h2 Shell.
+# Gerrit should not be running when the query is executed.
+# NOTE: this method currently doesn't report errors (because the h2 shell exits
+# with a zero exit code even if queries fail)
+sub _do_h2_query {
   my ( $self, $query ) = @_;
 
-  my (@cmd) = $self->ssh_base('Gerrit Code Review');
-  push @cmd, ( 'gerrit', 'gsql', '-c', "\"$query\"" );
+  my (@cmd) = (
+    'java',
+    '-cp', $self->_h2_jar(),
+    'org.h2.tools.Shell',
+    '-url', $self->_h2_jdbc_url(),
+    '-sql', $query,
+  );
+
   return _system_or_fail(@cmd);
+}
+
+# Returns path to the h2 jar for this gerrit installation, extracting it
+# from gerrit.war if needed.
+sub _h2_jar {
+  my ( $self ) = @_;
+
+  my $h2_jar = "$self->{dir}/h2.jar";
+  if (-e $h2_jar) {
+    return $h2_jar;
+  }
+
+  my $zip = Archive::Zip->new( $self->_installed_gerrit_war() );
+  ok( $zip, 'open gerrit.war' ) || return;
+
+  my (@possible) = $zip->membersMatching( '^WEB-INF/lib/h2-.*\.jar$' );
+  is( scalar(@possible), 1, 'find h2.jar in gerrit.war' ) || return;
+
+  is( $zip->extractMember( $possible[0], $h2_jar ), AZ_OK, 'extract h2.jar' )
+    || return;
+
+  return $h2_jar;
+}
+
+sub _installed_gerrit_war
+{
+  my ( $self ) = @_;
+  return "$self->{dir}/bin/gerrit.war";
+}
+
+sub _h2_jdbc_url
+{
+  my ( $self ) = @_;
+  return "jdbc:h2:$self->{dir}/db/ReviewDB";
 }
 
 # Like _system_or_fail, but operates on a $subref instead of
@@ -686,18 +728,18 @@ sub ensure_gerrit_installed {
   $self->_setup_peer_key();
   $self->_setup_git_ssh();
   $self->_create_gerrit_user( $args{user} );
-  $self->_do_gsql( "insert into account_ssh_keys("
+  $self->ensure_gerrit_stopped();
+  $self->_do_h2_query( "insert into account_ssh_keys("
       . "ssh_public_key, valid, account_id, seq"
       . ") values("
       . "'ssh-rsa $args{ sshkey_public_key } test','Y',1000000,0"
       . ")" );
-  $self->_do_gsql( "insert into account_external_ids("
+  $self->_do_h2_query( "insert into account_external_ids("
       . "account_id,email_address,external_id"
       . ") values("
       . "1000000, 'perl-gerrit-client-test\@127.0.0.1', "
       . "'mailto:perl-gerrit-client-test\@127.0.0.1'"
       . ")" );
-  $self->gerrit( 'flush-caches', '--all' );
 
   return $self;
 }
