@@ -125,7 +125,9 @@ sub test_patchset_creation {
   # be able to find that new commit (perhaps with some delay)
   my $commit3;
   {
-    $gerrit->git_test_commit() || return;
+    $gerrit->git_test_commit(
+      "commit 3\n\nChange-Id: " . Gerrit::Client::random_change_id() )
+      || return;
     $commit3 = qx(git rev-parse HEAD);
     chomp $commit3;
     is( kill( 15, $ssh_pid ), 1, 'killed ssh' );
@@ -160,23 +162,44 @@ sub test_patchset_creation {
     is( $e->{pushed}, $e->{revision}, 'revision equals what was pushed' );
   }
 
-  is(
+  # code review type may be expressed as either CRVW or Code-Review depending
+  # on gerrit version
+  my $type = $review_events{$commit2}{approvals}[0]{type};
+  ok( $type eq 'CRVW' || $type eq 'Code-Review' );
+
+  my $description = 'Code Review';
+  if ($type eq 'Code-Review') {
+    $description = $type;
+  }
+
+  like(
     $review_events{$commit2}{comment},
-    'review of commit 2',
+    qr{
+      \A
+      # this prefix appears on some gerrit versions
+      (Patch\ Set\ 2:\ Code-Review-1\s+)?
+      review\ of\ commit\ 2
+      \z
+    }xms,
     'commit 2 review message'
   );
   is_deeply(
     $review_events{$commit2}{approvals}[0],
-    { 'description' => 'Code Review',
-      'type'        => 'CRVW',
+    { 'description' => $description,
+      'type'        => $type,
       'value'       => '-1'
     },
     'commit 2 review score'
   );
 
-  is(
+  like(
     $review_events{$commit3}{comment},
-    'review of commit 3',
+    qr{
+      \A
+      (Patch\ Set\ 1:\s+)?
+      review\ of\ commit\ 3
+      \z
+    }xms,
     'commit 3 review message'
   );
   isnt( $review_events{$commit2}{approvals}, 'commit 3 no score' );
