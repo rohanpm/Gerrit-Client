@@ -454,8 +454,8 @@ be excluded from processing by the following:
 By default, while processing a patchset, a git work tree is set up
 with content set to the appropriate revision.
 
-C<git_work_tree => 0> may be passed to disable the work tree, saving some
-time and disk space. In this case, a bare clone is used, with HEAD
+C<< git_work_tree => 0 >> may be passed to disable the work tree, saving
+some time and disk space. In this case, a bare clone is used, with HEAD
 referring to the revision to be processed.
 
 This may be useful when the patch set processing does not require a
