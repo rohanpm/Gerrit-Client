@@ -130,6 +130,7 @@ sub test_patchset_creation {
       || return;
     $commit3 = qx(git rev-parse HEAD);
     chomp $commit3;
+    diag "'connection lost' warnings may be printed, don't be alarmed, this is expected...";
     is( kill( 15, $ssh_pid ), 1, 'killed ssh' );
     $gerrit->git_ok( 'push', '-v', 'origin', 'HEAD:refs/for/master' ) || return;
     $pushed = $commit3;

@@ -54,6 +54,8 @@ use Params::Validate qw(:all);
 use Test::More;
 use autodie;
 
+my $HAVE_GIT;
+
 # like system(), but fail test and diag() the output if the command fails
 sub _system_or_fail {
   my (@cmd) = @_;
@@ -1074,6 +1076,16 @@ sub ensure_gerrit_stopped {
 
 =back
 
+=item B<have_git>
+
+Returns true if and only if a functional git command is in PATH.
+
 =cut
+
+sub have_git {
+  $HAVE_GIT //= (0 == system('git', '--version'));
+
+  return $HAVE_GIT;
+}
 
 1;

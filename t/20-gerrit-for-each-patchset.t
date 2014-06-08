@@ -259,7 +259,7 @@ sub test_for_each_patchset {
   my $cv = AE::cv();
 
   # make sure we eventually give up if something goes wrong
-  my $timeout_timer = AE::timer( 30, 0, sub { $cv->croak('timed out!') } );
+  my $timeout_timer = AE::timer( 120, 0, sub { $cv->croak('timed out!') } );
   my $done_timer;
   my @events;
   my $guard;
@@ -289,6 +289,7 @@ sub test_for_each_patchset {
     %args,
   );
 
+  diag "'connection lost' warnings may be printed, don't be alarmed, this is expected...";
   $cv->recv();
 
   is( scalar(@events), 4, "$testname got expected number of events" );
@@ -387,6 +388,11 @@ sub record_event_from_child {
 }
 
 sub run_test {
+  unless (Gerrit::Client::Test::have_git()) {
+    plan skip_all => 'No functional git in PATH';
+    return;
+  }
+
   test_for_each_patchset_inproc;
   clear_reviewed_commits;
   test_for_each_patchset_forksub;

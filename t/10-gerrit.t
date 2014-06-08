@@ -92,6 +92,11 @@ sub test_next_change_id {
   [ ('Gerrit::Client: git environment is not set, using random Change-Id') x
       2 ];
 
+  unless (Gerrit::Client::Test::have_git()) {
+    diag "No working 'git' in path - many tests will be skipped!";
+    return;
+  }
+
   {
     local %ENV = %git1_env;
     system_or_fail(qw(git init));
@@ -177,7 +182,7 @@ qq|{"id":1,"key1":"val1"}\n{"id":2,"key2":"val2"}\n{"id":3,"key3":"val3"}\n|,
   my $cv = AE::cv();
 
   # make sure we eventually give up if something goes wrong
-  my $timeout_timer = AE::timer( 30, 0, sub { $cv->croak('timed out!') } );
+  my $timeout_timer = AE::timer( 120, 0, sub { $cv->croak('timed out!') } );
   my $done_timer;
 
   my @events;
@@ -233,6 +238,13 @@ qq|{"id":1,"key1":"val1"}\n{"id":2,"key2":"val2"}\n{"id":3,"key3":"val3"}\n|,
 }
 
 sub run_test {
+  # some tests are depending on the output of strerror;
+  # I hope this gives the same messages everywhere
+  local %ENV = %ENV;
+  for (qw(LC_ALL LC_MESSAGES LANG LANGUAGE)) {
+    $ENV{$_} = 'C';
+  }
+
   test_random_change_id;
   test_next_change_id;
   test_stream_events;
