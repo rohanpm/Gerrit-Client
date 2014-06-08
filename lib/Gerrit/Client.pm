@@ -1,6 +1,6 @@
 #############################################################################
 ##
-## Copyright (C) 2012 Rohan McGovern <rohan@mcgovern.id.au>
+## Copyright (C) 2014 Rohan McGovern <rohan@mcgovern.id.au>
 ## Copyright (C) 2012 Digia Plc and/or its subsidiary(-ies)
 ##
 ## This library is free software; you can redistribute it and/or
@@ -56,6 +56,7 @@ package Gerrit::Client;
 use strict;
 use warnings;
 
+use AnyEvent::HTTP;
 use AnyEvent::Handle;
 use AnyEvent::Util;
 use AnyEvent;
@@ -63,6 +64,7 @@ use Capture::Tiny qw(capture);
 use Carp;
 use Data::Alias;
 use Data::Dumper;
+use Digest::MD5 qw(md5_hex);
 use English qw(-no_match_vars);
 use File::Path;
 use File::Spec::Functions;
@@ -72,6 +74,7 @@ use JSON;
 use Params::Validate qw(:all);
 use Scalar::Util qw(weaken);
 use URI;
+use URI::Escape;
 
 use base 'Exporter';
 our @EXPORT_OK = qw(
@@ -146,7 +149,7 @@ sub _safeqx {
 
 =over
 
-=item B<< stream_events url => $gerrit_url, ... >>
+=item B<< stream_events ssh_url => $gerrit_url, ... >>
 
 Connect to "gerrit stream-events" on the given gerrit host and
 register one or more callbacks for events. Returns an opaque handle to
@@ -194,7 +197,9 @@ errors.
 sub stream_events {
   my (%args) = @_;
 
-  my $url      = $args{url}      || croak 'missing url argument';
+  $args{ssh_url} ||= $args{url};
+
+  my $url      = $args{ssh_url}  || croak 'missing ssh_url argument';
   my $on_event = $args{on_event} || croak 'missing on_event argument';
   my $on_error = $args{on_error} || sub {
     my ($error) = @_;
@@ -327,7 +332,7 @@ sub stream_events {
   return $out;
 }
 
-=item B<< for_each_patchset(url => $url, workdir => $workdir, ...) >>
+=item B<< for_each_patchset(ssh_url => $ssh_url, workdir => $workdir, ...) >>
 
 Set up a high-level event watcher to invoke a custom callback or
 command for each existing or incoming patch set on Gerrit. This method
@@ -345,9 +350,22 @@ Options:
 
 =over
 
-=item B<url>
+=item B<ssh_url>
 
-The Gerrit ssh URL, e.g. C<ssh://user@gerrit.example.com:29418/>. Mandatory.
+The Gerrit ssh URL, e.g. C<ssh://user@gerrit.example.com:29418/>.
+May also be specified as 'url' for backwards compatibility.
+Mandatory.
+
+=item B<http_url>
+
+=item B<< http_auth_cb => $sub->($response_headers, $request_headers) >>
+
+=item B<http_username>
+
+=item B<http_password>
+
+These arguments have the same meaning as for the L<review> function.
+Provide them if you want to post reviews via REST.
 
 =item B<workdir>
 
@@ -395,10 +413,17 @@ The argument to B<on_patchset_cmd> may be either a reference to an array
 holding the command and its arguments, or a reference to a subroutine
 which generates and returns an array for the command and its arguments.
 
+B<Note:> since B<on_patchset_cmd> has no way to return a value, it
+can't be used to generate ReviewInput objects for REST-based reviewing.
+See below.
+
 =back
 
 All on_patchset callbacks receive B<change> and B<patchset> hashref arguments.
 Note that a change may hold several patchsets.
+
+Output and the returned value of the callbacks may be used for posting a review
+back to Gerrit; see documentation of the C<review> argument below.
 
 =item B<< on_error => $sub->($error) >>
 
@@ -415,16 +440,41 @@ If false (the default), patch sets are not automatically reviewed
 (though they may be reviewed explicitly within the B<on_patchset_...>
 callbacks).
 
-If true, any output (stdout or stderr) from the B<on_patchset_...> callback
-will be captured and posted as a review message. If there is no output,
-no message is posted.
+If true, patch sets are automatically reviewed according to the following:
+
+=over
+
+=item *
+
+If an B<on_patchset_...> callback returned a ReviewInput hashref, a review
+is done via REST (see the L<review> function).  Note that B<on_patchset_cmd>
+doesn't support returning a value.
+
+=item *
+
+If an B<on_patchset_...> callback printed text on stdout/stderr, a review
+is done via SSH using the text as the top-level review message.
+
+=item *
+
+If both of the above are true, the review is attempted by REST first,
+and then via SSH if the REST review failed.  Therefore, writing a callback
+to both print out a meaningful message I<and> return a ReviewInput hashref
+enables a script to be portable across Gerrit versions with and without REST.
+
+=back
+
+See the B<REST vs SSH> discussion in the documentation for the L<review> function
+for more information on choosing between REST or SSH.
 
 If a string is passed, it is construed as a Gerrit approval category
 and a review score will be posted in that category. The score comes
 from the return value of the callback (or exit code in the case of
-B<on_patchset_cmd>).
+B<on_patchset_cmd>).  The returned value must be an integer, so this cannot
+be combined with reviewing by REST, which requires callbacks to return a
+hashref.
 
-=item B<< on_review => $sub->( $change, $patchset, $message, $score ) >>
+=item B<< on_review => $sub->( $change, $patchset, $message, $score, $returnvalue ) >>
 
 Optional callback invoked prior to performing a review (when the `review'
 option is set to a true value).
@@ -485,7 +535,12 @@ processed.
 sub for_each_patchset {
   my (%args) = @_;
 
-  $args{url} || croak 'missing url argument';
+  $args{ssh_url} ||= $args{url};
+  if ($args{http_username} && $args{http_password}) {
+    $args{http_auth_cb} ||= http_digest_auth($args{http_username}, $args{http_password});
+  }
+
+  $args{ssh_url} || croak 'missing ssh_url argument';
        $args{on_patchset}
     || $args{on_patchset_cmd}
     || $args{on_patchset_fork}
@@ -506,9 +561,9 @@ sub for_each_patchset {
   }
 
   # drop the path section of the URL to get base gerrit URL
-  my $url = URI->new($args{url});
+  my $url = URI->new($args{ssh_url});
   $url->path( undef );
-  $args{url} = $url->as_string();
+  $args{ssh_url} = $url->as_string();
 
   require "Gerrit/Client/ForEach.pm";
   my $self = bless {}, 'Gerrit::Client::ForEach';
@@ -524,7 +579,7 @@ sub for_each_patchset {
 
     query(
       $args{query},
-      url               => $args{url},
+      ssh_url           => $args{ssh_url},
       current_patch_set => 1,
       on_error          => sub { $args{on_error}->(@_) },
       on_success        => sub {
@@ -556,7 +611,7 @@ sub for_each_patchset {
   };
 
   $self->{stream} = Gerrit::Client::stream_events(
-    url      => $args{url},
+    ssh_url  => $args{ssh_url},
     on_event => sub {
       $weakself->_handle_for_each_event(@_);
     },
@@ -755,6 +810,12 @@ sub git_environment {
   return %env;
 }
 
+my @GERRIT_LABELS = qw(
+  code_review
+  sanity_review
+  verified
+);
+
 # options to Gerrit::review which map directly to options to
 # "ssh <somegerrit> gerrit review ..."
 my %GERRIT_REVIEW_OPTIONS = (
@@ -765,33 +826,162 @@ my %GERRIT_REVIEW_OPTIONS = (
   stage   => { type => BOOLEAN, default => 0 },
   submit  => { type => BOOLEAN, default => 0 },
   ( map { $_ => { regex => qr{^[-+]?\d+$}, default => undef } }
-      qw(
-      code_review
-      sanity_review
-      verified
-      )
+      @GERRIT_LABELS
   )
 );
 
-=item B<< review $commit_or_change, url => $gerrit_url, ... >>
+=item B<< review $revision, ssh_url => $ssh_url, http_url => $http_url ... >>
 
-Wrapper for the `gerrit review' command; add a comment and/or update the status
-of a change in gerrit.
+Post a gerrit review, either by the `gerrit review' command using
+ssh, or via REST.
 
-$commit_or_change is mandatory, and is either a git commit (in
-abbreviated or full 40-digit form), or a gerrit change number and
-patch set separated by a comment (e.g. 3404,3 refers to patch set 3 of
-the gerrit change accessible at http://gerrit.example.com/3404). The
-latter form is deprecated and may be removed in some version of
-gerrit.
+$revision is mandatory, and should be a git commit in full 40-digit form.
+(Actually, a few other forms of $revision are accepted, but they are
+deprecated - unabbreviated revisions are the only input which work for
+both SSH and REST.)
 
-$gerrit_url is also mandatory and should be a URL with ssh schema referring to a
+$ssh_url should be a URL with ssh schema referring to a 
 valid Gerrit installation (e.g. "ssh://user@gerrit.example.com:29418/").
 The URL may optionally contain the relevant gerrit project.
 
-All other arguments are optional, and include:
+$http_url should be an HTTP or HTTPS URL pointing at the base of a Gerrit
+installation (e.g. "https://gerrit.example.com/").
+
+At least one of $ssh_url or $http_url must be provided.
 
 =over
+
+B<REST vs SSH>
+
+In Gerrit 2.6, it became possible to post reviews onto patch sets using
+a new REST API. In earlier versions of gerrit, only the `gerrit review'
+command may be used.
+
+Reviewing by REST has a significant advantage over `gerrit review':
+comments may be posted directly onto the relevant lines of a patch.
+`gerrit review' in contrast only supports setting a top-level message.
+
+Gerrit::Client supports posting review comments both by REST and
+`gerrit review'. Most scripts will most likely prefer to use REST due
+to the improved review granularity.
+
+To review by REST:
+
+=over
+
+=item *
+
+Provide the C<http_url> argument, and most likely C<http_username> and C<http_password>.
+
+=item *
+
+Provide the C<project> and C<branch> arguments.
+
+=item *
+
+Provide the C<reviewInput> argument as a hash with the correct structure.
+(See documentation below.)
+
+=back
+
+To review by SSH:
+
+=over
+
+=item *
+
+Provide the C<ssh_url> argument.
+
+=item *
+
+Provide the C<message> argument, and one or more of the score-related
+arguments.
+
+=back
+
+To review by REST where supported, with fallback to SSH if REST
+is unavailable (e.g on Gerrit < 2.6), provide all of the arguments
+listed above.  C<message> will only be used if reviewing by REST was
+not available.
+
+=back
+
+Other arguments to this method include:
+
+=over
+
+=item B<< http_auth_cb => $sub->($response_headers, $request_headers) >>
+
+A callback invoked when HTTP authentication to Gerrit is required.
+The callback receives HTTP headers from the 401 Unauthorized response
+in $response_headers, and should add corresponding request headers
+(such as Authorization) into $request_headers.
+
+$response_headers also includes the usual AnyEvent::HTTP psuedo-headers,
+and one additional psuedo-header, Method, which is the HTTP method being
+used (i.e. "POST").
+
+The callback must return true if it was able to provide the necessary
+authentication headers.  It should return false if authentication failed.
+
+See also C<http_username>, C<http_password> and C<Gerrit::Client::http_digest_auth>,
+to use the Digest-based authentication used by default in Gerrit.
+
+=item B<http_username>
+
+=item B<http_password>
+
+Passing these values is a shortcut for:
+
+  http_auth_cb => Gerrit::Client::http_digest_auth($username, $password)
+
+... which uses Gerrit's default Digest-based authentication.
+
+=item B<< reviewInput => $hashref >>
+
+A ReviewInput object as used by Gerrit's REST API.
+
+This is a simple data structure of the following form:
+
+  {
+    message => "Some nits need to be fixed.",
+    labels => {
+      'Code-Review' => -1
+    },
+    comments => {
+      'gerrit-server/src/main/java/com/google/gerrit/server/project/RefControl.java' => [
+        {
+          line => 23,
+          message => '[nit] trailing whitespace'
+        },
+        {
+          line => 49,
+          message => "[nit] s/conrtol/control"
+        }
+      ]
+    }
+  }
+
+This value is only used if reviewing via REST.
+
+=item B<< message => $string >>
+
+Top-level review message.
+
+This value is only used if reviewing via SSH, or if REST reviewing was
+attempted but failed.
+
+=item B<< project => $string >>
+
+=item B<< branch => $string >>
+
+Project and branch values for the patch set to be reviewed.
+
+If reviewing via SSH, these are only necessary if the patch set can't
+be unambiguously located by its git revision alone. If reviewing via
+REST, these are always necessary.
+
+In any case, it's recommended to always provide these.
 
 =item B<< on_success => $cb->() >>
 
@@ -800,10 +990,6 @@ All other arguments are optional, and include:
 Callbacks invoked when the operation succeeds or fails.
 
 =item B<< abandon => 1|0 >>
-
-=item B<< message => $string >>
-
-=item B<< project => $string >>
 
 =item B<< restore => 1|0 >>
 
@@ -817,7 +1003,7 @@ Callbacks invoked when the operation succeeds or fails.
 
 =item B<< verified => $number >>
 
-These options are passed to the `gerrit review' command.  For
+Most of these options are passed to the `gerrit review' command.  For
 information on their usage, please see the output of `gerrit review
 --help' on your gerrit installation, or see L<the Gerrit
 documentation|http://gerrit.googlecode.com/svn/documentation/2.2.1/cmd-review.html>.
@@ -834,7 +1020,15 @@ sub review {
   my $commit_or_change = shift;
   my (%options) = validate(
     @_,
-    { url        => 1,
+    { url        => 0,
+      ssh_url    => 0,
+      http_url   => 0,
+      http_auth_cb => 0,
+      http_username => 0,
+      http_password => 0,
+      change     => 0,
+      branch     => 0,
+      reviewInput => { type => HASHREF, default => undef },
       on_success => { type => CODEREF, default => undef },
       on_error   => {
         type    => CODEREF,
@@ -846,18 +1040,157 @@ sub review {
     }
   );
 
-  my $parsed_url = _gerrit_parse_url( $options{url} );
-  my @cmd = ( @{ $parsed_url->{cmd} }, 'review', $commit_or_change, );
+  $options{ssh_url} ||= $options{url};
 
-  # project can be filled in by explicit 'project' argument, or from
-  # URL, or left blank
-  $options{project} ||= $parsed_url->{project};
-  if ( !$options{project} ) {
-    delete $options{project};
+  if (!$options{ssh_url} && !$options{http_url}) {
+    croak 'called without SSH or HTTP URL';
   }
 
+  if (!$options{http_auth_cb} && $options{http_username} && $options{http_password}) {
+    $options{http_auth_cb} = Gerrit::Client::http_digest_auth($options{http_username}, $options{http_password});
+  }
+
+  if ($options{ssh_url}) {
+    $options{parsed_url} = _gerrit_parse_url( $options{ssh_url} );
+    # project can be filled in by explicit 'project' argument, or from
+    # URL, or left blank
+    $options{project} ||= $options{parsed_url}{project};
+    if ( !$options{project} ) {
+      delete $options{project};
+    }
+  }
+
+  if ($options{reviewInput}) {
+    return _review_by_rest_then_ssh($commit_or_change, \%options)
+  }
+
+  return _review_by_ssh($commit_or_change, \%options);
+}
+
+sub _review_by_rest_then_ssh {
+  my ($commit, $options) = @_;
+
+  foreach my $opt (qw(project branch http_url change)) {
+    if (!$options->{$opt}) {
+      croak "Attempted to do review by REST with missing $opt argument";
+    }
+  }
+
+  unless ($commit =~ /^[a-fA-F0-9]+$/) {
+    croak "Invalid revision: $commit. For REST review, must specify a valid git revision";
+  }
+
+  my $data = $options->{reviewInput};
+
+  my $jsondata = encode_json($data);
+
+  my $url = join('/',
+    $options->{http_url},
+    'a',
+    'changes',
+    uri_escape(join('~', $options->{project}, $options->{branch}, $options->{change})),
+    'revisions',
+    $commit,
+    'review',
+  );
+
+  _debug_print "Posting to $url ...\n";
+
+  my $tried_auth = 0;
+
+  my %post_args = (
+    headers => { 'Content-Type' => 'application/json;charset=UTF-8' },
+    recurse => 5,
+  );
+
+  my $handle_response;
+  my $do_http_call;
+
+  my $handle_no_rest = sub {
+    _debug_print "Post to $url returned 404. Fall through to ssh...";
+    return _review_by_ssh($commit, $options);
+  };
+
+  my $handle_ok = sub {
+    _debug_print "Post to $url returned OK. Fall through to ssh...";
+    if ($data->{message} || $data->{comments}) {
+      delete $options->{message};
+    }
+    if ($data->{labels}) {
+      foreach my $lbl (@GERRIT_LABELS) {
+        delete $options->{$lbl};
+      }
+    }
+
+    return _review_by_ssh($commit, $options);
+  };
+
+  my $handle_err = sub {
+    my ($body, $hdr) = @_;
+    my $errstr = "POST $url: $hdr->{Status} $hdr->{Reason}\n$body";
+    if ($options->{on_error} ) {
+      $options->{on_error}->($errstr);
+    }
+    _debug_print "POST to $url returned errors: " . Dumper($hdr);
+  };
+
+  my $handle_auth = sub {
+    my ($body, $hdr) = @_;
+
+    $tried_auth = 1;
+
+    $hdr->{Method} = 'POST';
+
+    if ($options->{http_auth_cb}->($hdr, $post_args{headers})) {
+      _debug_print "Repeating POST to $url after auth";
+      $do_http_call->();
+    } else {
+      warn __PACKAGE__ . ': HTTP authentication callback failed.';
+      $handle_err->($body, $hdr);
+    }
+  };
+
+  if (!$options->{http_auth_cb}) {
+    $handle_auth = undef;
+    _debug_print "No HTTP authentication callback.";
+  }
+
+  $handle_response = sub {
+    my ($body, $hdr) = @_;
+
+    if ($hdr->{Status} =~ /^2/) {
+      $handle_ok->($body, $hdr);
+      return;
+    }
+
+    if ($hdr->{Status} eq '404') {
+      $handle_no_rest->($body, $hdr);
+      return;
+    }
+
+    if ($hdr->{Status} eq '401' && !$tried_auth && $handle_auth) {
+      $handle_auth->($body, $hdr);
+      return;
+    }
+  
+    # failed!
+    $handle_err->($body, $hdr);
+  };
+
+  $do_http_call = sub { http_post($url, $jsondata, %post_args, $handle_response) };
+  $do_http_call->();
+  
+  return;
+}
+
+sub _review_by_ssh {
+  my ($commit_or_change, $options) = @_;
+
+  my $parsed_url = $options->{parsed_url};
+  my @cmd = ( @{ $parsed_url->{cmd} }, 'review', $commit_or_change, );
+
   while ( my ( $key, $spec ) = each %GERRIT_REVIEW_OPTIONS ) {
-    my $value = $options{$key};
+    my $value = $options->{$key};
 
     # code_review -> --code-review
     my $cmd_key = $key;
@@ -885,11 +1218,11 @@ sub review {
   $cv->cb(
     sub {
       my $status = shift->recv();
-      if ( $status && $options{on_error} ) {
-        $options{on_error}->("$cmdstr exited with status $status");
+      if ( $status && $options->{on_error} ) {
+        $options->{on_error}->("$cmdstr exited with status $status");
       }
-      if ( !$status && $options{on_success} ) {
-        $options{on_success}->();
+      if ( !$status && $options->{on_success} ) {
+        $options->{on_success}->();
       }
 
       # make sure we stay alive until this callback is executed
@@ -917,7 +1250,7 @@ my %GERRIT_QUERY_OPTIONS = (
   )
 );
 
-=item B<< query $query, url => $gerrit_url, ... >>
+=item B<< query $query, ssh_url => $gerrit_url, ... >>
 
 Wrapper for the `gerrit query' command; send a query to gerrit
 and invoke a callback with the results.
@@ -927,7 +1260,7 @@ Gerrit
 documentation|https://gerrit.googlecode.com/svn/documentation/2.2.1/user-search.html>.
 "status:open age:1w" is an example of a simple Gerrit query.
 
-$url is the URL with ssh schema of the Gerrit site to be queried
+$gerrit_url is the URL with ssh schema of the Gerrit site to be queried
 (e.g. "ssh://user@gerrit.example.com:29418/").
 If the URL contains a path (project) component, it is ignored.
 
@@ -979,7 +1312,8 @@ sub query {
   my $query = shift;
   my (%options) = validate(
     @_,
-    { url        => 1,
+    { url        => 0,
+      ssh_url    => 0,
       on_success => { type => CODEREF, default => undef },
       on_error   => {
         type    => CODEREF,
@@ -991,7 +1325,9 @@ sub query {
     }
   );
 
-  my $parsed_url = _gerrit_parse_url( $options{url} );
+  $options{ssh_url} ||= $options{url};
+
+  my $parsed_url = _gerrit_parse_url( $options{ssh_url} );
   my @cmd = ( @{ $parsed_url->{cmd} }, 'query', '--format', 'json' );
 
   while ( my ( $key, $spec ) = each %GERRIT_QUERY_OPTIONS ) {
@@ -1073,6 +1409,84 @@ sub quote {
   return $string;
 }
 
+=item B<< http_digest_auth($username, $password) >>
+
+Returns a callback to be used with REST-related Gerrit::Client functions.
+The callback enables Digest-based HTTP authentication with the given
+credentials.
+
+Note that only the Digest scheme used by Gerrit (as of 2.8) is supported:
+algorithm = MD5, qop = auth.
+
+=cut
+sub http_digest_auth {
+  my ($username, $password, %args) = @_;
+
+  my $cnonce_cb = $args{cnonce_cb} || sub {
+    sprintf("%08x", rand() * ( 2**32 ));
+  };
+
+  my %noncecount;
+
+  return sub {
+    my ($in_headers, $out_headers) = @_;
+
+    my $authenticate = $in_headers->{'www-authenticate'};
+    if (!$authenticate || !($authenticate =~ /^Digest /)) {
+      warn __PACKAGE__ . ': server did not offer digest authentication';
+      return;
+    }
+
+    $authenticate =~ s/^Digest //;
+
+    my %attr;
+    while ($authenticate =~ /([a-zA-Z0-9\-]+)="([^"]+)"(,\s*)?/g) {
+      $attr{$1} = $2;
+    }
+
+    if ($attr{qop}) {
+      $attr{qop} = [ split(/,/, $attr{qop}) ];
+    }
+
+    $attr{algorithm} ||= 'MD5';
+    $attr{qop} ||= [];
+
+    _debug_print "digest attrs with defaults filled: "  . Dumper(\%attr);
+
+    unless (grep {$_ eq 'auth'} @{$attr{qop}}) {
+      warn __PACKAGE__ . ": server didn't offer qop=auth for digest authentication";
+      return;
+    }
+
+    unless ($attr{algorithm} eq 'MD5') {
+      warn __PACKAGE__ . ": server didn't offer algorithm=MD5 for digest authentication";
+    }
+
+    my $nonce = $attr{nonce};
+    my $cnonce = $cnonce_cb->();
+
+    $noncecount{$nonce} = ($noncecount{$nonce}||0) + 1;
+    my $count = $noncecount{$nonce};
+    my $count_hex = sprintf("%08x", $count);
+
+    my $uri = URI->new($in_headers->{URL})->path;
+    my $method = $in_headers->{Method};
+    _debug_print "uri $uri method $method\n";
+
+    my $ha1 = md5_hex($username, ':', $attr{realm}, ':', $password);
+    my $ha2 = md5_hex($method, ':', $uri);
+    my $response = md5_hex($ha1, ':', $nonce, ':', $count_hex, ':', $cnonce, ':', 'auth', ':', $ha2);
+
+    my $authstr = qq(Digest username="$username", realm="$attr{realm}", nonce="$nonce", uri="$uri", )
+                 .qq(cnonce="$cnonce", nc=$count_hex, qop="auth", response="$response");
+    
+    _debug_print "digest auth: $authstr\n";
+
+    $out_headers->{Authorization} = $authstr;
+    return 1;
+  }
+}
+
 =back
 
 =head1 VARIABLES
@@ -1136,9 +1550,9 @@ Rohan McGovern, <rohan@mcgovern.id.au>
 
 =head1 COMPATIBILITY
 
-Gerrit::Client is tested with Gerrit 2.2.2.1 and Gerrit 2.6-rc1, and
-hence could reasonably be expected to work with any gerrit version in
-that range.
+Gerrit::Client has been known to work with Gerrit 2.2.2.1, Gerrit 2.6-rc1,
+and Gerrit 2.8.5 and hence could reasonably be expected to work with any
+gerrit version in that range.
 
 Please note that different Gerrit versions may represent objects in
 slightly incompatible ways (e.g. "CRVW" vs "Code-Review" strings in

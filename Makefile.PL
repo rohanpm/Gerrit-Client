@@ -26,6 +26,7 @@ WriteMakefile(
   },
   PREREQ_PM => {
     'AnyEvent'         => 0,
+    'AnyEvent::HTTP'   => 0,
     'Capture::Tiny'    => 0,
     'Data::Alias'      => 0,
     'File::chdir'      => 0,

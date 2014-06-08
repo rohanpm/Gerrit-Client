@@ -931,6 +931,17 @@ sub giturl_base {
   return "ssh://$user\@127.0.0.1:$self->{ ssh_port }";
 }
 
+=item B<http_url>
+
+Returns the base HTTP URL for this gerrit site.
+
+=cut
+
+sub http_url {
+  my ( $self ) = @_;
+  return $self->{http_url};
+}
+
 =item B<git_ssh_wrapper>
 
 Returns the path to a wrapper script for the ssh command.  The wrapper

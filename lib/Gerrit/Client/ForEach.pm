@@ -167,7 +167,7 @@ sub _enqueue_event {
 sub _giturl {
   my ( $self, $event ) = @_;
   my $project = $event->{change}{project};
-  return "$self->{args}{url}/$project";
+  return "$self->{args}{ssh_url}/$project";
 }
 
 sub _gitdir {
@@ -430,10 +430,10 @@ sub _ensure_cmd {
 sub _do_cb_sub {
   my ( $self, $sub, $event ) = @_;
 
-  my $score;
+  my $returned;
   my $run = sub {
     local $CWD = $event->{_workdir};
-    $score = $sub->( $event->{change}, $event->{patchSet} );
+    $returned = $sub->( $event->{change}, $event->{patchSet} );
   };
 
   my $output;
@@ -444,7 +444,7 @@ sub _do_cb_sub {
   }
 
   return {
-    score => $score,
+    returned => $returned,
     output => $output
   };
 }
@@ -578,20 +578,38 @@ sub _do_callback {
     return
       unless $cb->(
       $event->{change},  $event->{patchSet},
-      $result->{output}, $result->{score}
+      $result->{output}, $result->{score},
+      $result->{returned}
       );
   }
 
-  if ( !$result->{output} && !$result->{score} ) {
+  if ( !$result->{output} && !$result->{score} && !$result->{returned}) {
     # no review to be done
     return;
   }
 
+  my (%review_args) = (
+    message => $result->{output},
+    project => $event->{change}{project},
+    branch  => $event->{change}{branch},
+    change  => $event->{change}{id},
+  );
+
+  for my $arg (qw(ssh_url http_url http_auth_cb)) {
+    $review_args{$arg} = $self->{args}{$arg};
+  }
+
+  if ($result->{returned}) {
+    if (ref($result->{returned}) eq 'HASH') {
+      $review_args{reviewInput} = $result->{returned};
+    } else {
+      $review_args{$review} = $result->{returned};
+    }
+  }
+
   Gerrit::Client::review(
     $event->{patchSet}{revision},
-    url     => $self->{args}{url},
-    message => $result->{output},
-    $review => $result->{score},
+    %review_args
   );
 }
 
