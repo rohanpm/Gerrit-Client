@@ -22,6 +22,7 @@ WriteMakefile(
     'Sub::Override'   => 0,
     'Test::More'      => 0,
     'Test::Warn'      => 0,
+    'autodie'         => 0,
   },
   PREREQ_PM => {
     'AnyEvent'         => 0,
