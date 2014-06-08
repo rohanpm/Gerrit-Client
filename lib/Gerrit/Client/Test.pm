@@ -658,7 +658,7 @@ object is destroyed.
 
 URL or path to a gerrit.war to use for installation.
 
-Defaults to http://gerrit.googlecode.com/files/gerrit-full-2.5.war .
+Defaults to http://gerrit-releases.storage.googleapis.com/gerrit-2.8.5.war .
 
 =item user
 
@@ -693,7 +693,7 @@ sub ensure_gerrit_installed {
 
   $args{ssh_port}  ||= _find_available_tcp_port();
   $args{http_port} ||= _find_available_tcp_port();
-  $args{war}       ||= 'http://gerrit.googlecode.com/files/gerrit-full-2.5.war';
+  $args{war}       ||= 'http://gerrit-releases.storage.googleapis.com/gerrit-2.8.5.war';
   $args{dir} ||= File::Temp->newdir( 'Gerrit-Client-Test.XXXXXX', TMPDIR => 1 );
   $args{user} ||= 'perl-gerrit-client-test';
 
