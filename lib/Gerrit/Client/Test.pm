@@ -742,6 +742,10 @@ sub ensure_gerrit_installed {
       . "1000000, 'perl-gerrit-client-test\@127.0.0.1', "
       . "'mailto:perl-gerrit-client-test\@127.0.0.1'"
       . ")" );
+  $self->_do_h2_query( "UPDATE account_external_ids "
+      . "SET password='abcdefghijkl' "
+      . "WHERE account_id=1000000;"
+  );
 
   return $self;
 }
