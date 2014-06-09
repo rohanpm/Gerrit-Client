@@ -8,7 +8,7 @@ WriteMakefile(
   AUTHOR             => q{Rohan McGovern <rohan@mcgovern.id.au>},
   VERSION_FROM       => 'lib/Gerrit/Client.pm',
   ABSTRACT_FROM      => 'lib/Gerrit/Client.pm',
-  LICENSE            => 'LGPL_2',
+  LICENSE            => 'lgpl_2_1',
   PL_FILES           => {},
   MIN_PERL_VERSION   => 5.010,
   CONFIGURE_REQUIRES => { 'ExtUtils::MakeMaker' => 0, },
