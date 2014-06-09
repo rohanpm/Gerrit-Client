@@ -90,7 +90,7 @@ our @EXPORT_OK = qw(
 
 our @GIT             = ('git');
 our @SSH             = ('ssh');
-our $VERSION         = 20121218;
+our $VERSION         = 20140609;
 our $DEBUG           = !!$ENV{GERRIT_CLIENT_DEBUG};
 our $MAX_CONNECTIONS = 2;
 our $MAX_FORKS       = 4;

@@ -1,5 +1,12 @@
 Revision history for Gerrit-Client
 
+20140609    2014-06-09
+
+    - for_each_patchset and review may now post reviews using the REST API
+      provided in Gerrit 2.6 and later. This allows reviews to associate
+      comments directly with the relevant lines of a patch set.
+    - Test fixes to resolve some problems reported by cpantesters.
+
 20121218    2012-12-18
 
     - for_each_patchset new options: on_review, git_work_tree new
