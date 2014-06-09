@@ -1561,7 +1561,8 @@ these changes.
 
 =head1 BUGS
 
-Please use L<http://rt.cpan.org/> to view or report bugs.
+Please use L<https://github.com/rohanpm/Gerrit-Client/issues>
+to view or report bugs.
 
 When reporting a reproducible bug, please include the output of your
 program with the environment variable GERRIT_CLIENT_DEBUG set to 1.
