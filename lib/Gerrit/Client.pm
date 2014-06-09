@@ -1,6 +1,6 @@
 #############################################################################
 ##
-## Copyright (C) 2014 Rohan McGovern <rohan@mcgovern.id.au>
+## Copyright (C) 2012-2014 Rohan McGovern <rohan@mcgovern.id.au>
 ## Copyright (C) 2012 Digia Plc and/or its subsidiary(-ies)
 ##
 ## This library is free software; you can redistribute it and/or
@@ -1569,7 +1569,7 @@ program with the environment variable GERRIT_CLIENT_DEBUG set to 1.
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2012 Rohan McGovern <rohan@mcgovern.id.au>
+Copyright (C) 2012-2014 Rohan McGovern <rohan@mcgovern.id.au>
 
 Copyright (C) 2012 Digia Plc and/or its subsidiary(-ies)
 

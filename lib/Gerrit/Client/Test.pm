@@ -1,6 +1,6 @@
 #############################################################################
 ##
-## Copyright (C) 2012 Rohan McGovern <rohan@mcgovern.id.au>
+## Copyright (C) 2012-2014 Rohan McGovern <rohan@mcgovern.id.au>
 ##
 ## This library is free software; you can redistribute it and/or
 ## modify it under the terms of the GNU Lesser General Public

@@ -20,8 +20,8 @@ perldoc command.
 
 You can also look for information at:
 
-    RT, CPAN's request tracker (report bugs here)
-        http://rt.cpan.org/NoAuth/Bugs.html?Dist=Gerrit-Client
+    GitHub (report bugs here)
+        https://github.com/rohanpm/Gerrit-Client
 
     AnnoCPAN, Annotated CPAN documentation
         http://annocpan.org/dist/Gerrit-Client
@@ -35,7 +35,7 @@ You can also look for information at:
 
 LICENSE AND COPYRIGHT
 
-Copyright (C) 2012 Rohan McGovern
+Copyright (C) 2012-2014 Rohan McGovern
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU Lesser General Public
