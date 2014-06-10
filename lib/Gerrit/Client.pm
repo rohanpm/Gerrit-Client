@@ -295,8 +295,8 @@ sub stream_events {
         # every successful read resets sleep period
         $sleep = $INIT_SLEEP;
 
-        $on_event->($data);
         $h->push_read(%read_req);
+        $on_event->($data);
       }
     );
     $handle->{r_h}->push_read(%read_req);
