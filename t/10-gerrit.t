@@ -171,7 +171,7 @@ sub test_stream_events {
       { exitcode => 1 },
 
       # then simulate various events from a long-lived connection
-      { delay    => 30,
+      { delay    => 120,
         exitcode => 0,
         stdout =>
 qq|{"id":1,"key1":"val1"}\n{"id":2,"key2":"val2"}\n{"id":3,"key3":"val3"}\n|,

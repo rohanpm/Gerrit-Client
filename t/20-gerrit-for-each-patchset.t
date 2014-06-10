@@ -249,7 +249,7 @@ sub test_for_each_patchset {
         exitcode => 255,
         stdout   => patchset_created_json($test_change4) . "\n"
       },
-      { delay    => 30,
+      { delay    => 120,
         exitcode => 0,
         stdout   => patchset_created_json($test_change5) . "\n"
       }
@@ -258,10 +258,11 @@ sub test_for_each_patchset {
 
   my $cv = AE::cv();
 
-  # make sure we eventually give up if something goes wrong
-  my $timeout_timer = AE::timer( 120, 0, sub { $cv->croak('timed out!') } );
-  my $done_timer;
   my @events;
+
+  # make sure we eventually give up if something goes wrong
+  my $timeout_timer = AE::timer( 120, 0, sub { $cv->croak("timed out after $#events event(s)") } );
+  my $done_timer;
   my $guard;
 
   my %readreq;
