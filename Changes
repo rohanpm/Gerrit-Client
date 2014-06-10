@@ -1,5 +1,11 @@
 Revision history for Gerrit-Client
 
+20140610    2014-06-10
+
+    - Fixed an error in POD
+    - Speculative fixes for problems reported by cpantesters, and more
+      output from tests to aid debugging.
+
 20140609    2014-06-09
 
     - for_each_patchset and review may now post reviews using the REST API
