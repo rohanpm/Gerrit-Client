@@ -394,10 +394,15 @@ sub run_test {
     return;
   }
 
+  diag "begin inproc test...";
   test_for_each_patchset_inproc;
   clear_reviewed_commits;
+
+  diag "begin forksub test...";
   test_for_each_patchset_forksub;
   clear_reviewed_commits;
+
+  diag "begin cmd test...";
   test_for_each_patchset_cmd;
 
   return;
