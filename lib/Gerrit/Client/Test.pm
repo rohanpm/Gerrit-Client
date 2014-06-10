@@ -1089,8 +1089,6 @@ sub ensure_gerrit_stopped {
   return $self->stop_gerrit();
 }
 
-=back
-
 =item B<have_git>
 
 Returns true if and only if a functional git command is in PATH.
@@ -1102,5 +1100,9 @@ sub have_git {
 
   return $HAVE_GIT;
 }
+
+=back
+
+=cut
 
 1;
