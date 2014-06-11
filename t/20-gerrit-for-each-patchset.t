@@ -6,6 +6,7 @@ use AnyEvent;
 use AnyEvent::Socket;
 use AnyEvent::Handle;
 use AnyEvent::Util;
+use Config;
 use Data::Dumper;
 use Dir::Self;
 use English qw( -no_match_vars );
@@ -369,8 +370,10 @@ sub test_for_each_patchset_cmd {
     return 0;
   };
 
-  test_for_each_patchset( 'cmd',
-    on_patchset_cmd => [ 'perl', $script, 'record_event' ] );
+  my @cmd = ($Config{perlpath}, $script, 'record_event');
+  diag "patchset command: @cmd";
+
+  test_for_each_patchset( 'cmd', on_patchset_cmd => \@cmd );
 }
 
 sub record_event_from_child {
