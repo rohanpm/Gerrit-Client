@@ -366,6 +366,7 @@ sub test_for_each_patchset_cmd {
   }, sub {
     my (undef, undef, $port) = @_;
     $ENV{TEST_SOCKET_PORT} = $port;
+    return 0;
   };
 
   test_for_each_patchset( 'cmd',
