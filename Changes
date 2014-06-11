@@ -1,5 +1,9 @@
 Revision history for Gerrit-Client
 
+20140611    2014-06-11
+
+    - Fixed several bugs in autotests
+
 20140610    2014-06-10
 
     - Fixed an error in POD
