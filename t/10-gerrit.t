@@ -214,19 +214,13 @@ qq|{"id":1,"key1":"val1"}\n{"id":2,"key2":"val2"}\n{"id":3,"key3":"val3"}\n|,
     $cv->recv();
   }
 
-  # order of warnings is undefined; sort for testing
-  @warnings = sort @warnings;
-  is( scalar(@warnings), 2, 'got expected amount of warnings' );
-  is(
-    $warnings[0],
-    "Gerrit::Client: Broken pipe\n",
-    'first warning as expected'
-  );
-  like(
-    $warnings[1],
-    qr{\AGerrit::Client: ssh exited},
-    'second warning as expected'
-  );
+  # On most systems we'll get messages for both "ssh exited" and "Broken pipe".
+  # However, this isn't guaranteed - it depends on whether the event loop runs
+  # in between when these two errors can be detected.  Furthermore, the "Broken pipe"
+  # error string depends on the locale and the C library.
+  # Let's just test that we got 1 or 2 warnings.
+  ok( scalar(@warnings) >= 1, 'got some warnings' );
+  ok( scalar(@warnings) <= 2, "didn't get too many warnings" );
 
   is_deeply(
     \@events,
@@ -238,13 +232,6 @@ qq|{"id":1,"key1":"val1"}\n{"id":2,"key2":"val2"}\n{"id":3,"key3":"val3"}\n|,
 }
 
 sub run_test {
-  # some tests are depending on the output of strerror;
-  # I hope this gives the same messages everywhere
-  local %ENV = %ENV;
-  for (qw(LC_ALL LC_MESSAGES LANG LANGUAGE)) {
-    $ENV{$_} = 'C';
-  }
-
   test_random_change_id;
   test_next_change_id;
   test_stream_events;
