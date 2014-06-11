@@ -44,6 +44,7 @@ use Archive::Zip qw(:ERROR_CODES);
 use Capture::Tiny qw(capture_merged capture);
 use Carp;
 use English;
+use File::Basename;
 use File::Path;
 use File::Temp;
 use File::chdir;
